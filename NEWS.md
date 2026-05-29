@@ -1,4 +1,11 @@
 # bamp 2.2.0
+* `plot()` of an apc object now works for any number of plotted `quantiles`:
+  a single quantile no longer errors with "incorrect number of dimensions",
+  and vectors of length 2 or 4 no longer error with "invalid line type" (the
+  line types were previously only defined for 1, 3 or 5 quantiles). The
+  established appearance for 3 and 5 quantiles is unchanged. The covariate
+  panels also tolerate a zero in the covariate without aborting on a
+  non-finite axis range.
 * `plot()` and `effects()` now take a `convention` argument that fixes the
   non-identified linear trend (drift) of a full age-period-cohort model for
   display. The three effects are identifiable only up to a shared linear trend,

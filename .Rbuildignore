@@ -1,0 +1,4 @@
+^graphify-out$
+^\.claude$
+^.*\.Rcheck$
+^.*\.tar\.gz$
