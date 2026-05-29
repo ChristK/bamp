@@ -2,9 +2,20 @@
 #'
 #' @param x apc object
 #' @param quantiles quantiles to plot. Default: \code{c(0.05,0.5,0.95)} is median and 90\% credible interval.
+#' @param convention display-layer gauge convention for the linear trend (drift)
+#'   in a full age-period-cohort model; one of \code{"age"} (default),
+#'   \code{"period"}, \code{"cohort"} or \code{"none"}. In a full APC model the
+#'   three effects are identifiable only up to a shared linear trend; this fixes
+#'   that single degree of freedom, removing the run-to-run drift that is the
+#'   dominant source of non-reproducibility in the plotted curves (residual
+#'   curvature and Monte-Carlo noise remain). \code{"age"} shows the age effect
+#'   as curvature about a zero trend and puts the drift in the period and cohort
+#'   effects; \code{"none"} plots the raw, un-gauged effects. It is display-only
+#'   (the fitted rates and predictions are unchanged) and is ignored for models
+#'   that are not full APC. See \code{\link{effects.apc}}.
 #' @param ... Additional arguments will be ignored
-#' 
-#' @details Plot of age, period and cohort effects from apc objects. If covariates have been used for period/cohort, a second plot with covariate, absolute effect and relative effect is created. Absolute effect is relative effect times covariate. 
+#'
+#' @details Plot of age, period and cohort effects from apc objects. If covariates have been used for period/cohort, a second plot with covariate, absolute effect and relative effect is created. Absolute effect is relative effect times covariate.
 #' @import stats graphics
 #' @return plot
 #' @export
@@ -14,13 +25,16 @@
 #' model <- bamp(cases, population, age="rw1", period="rw1", cohort="rw1", periods_per_agegroup = 5)
 #' plot(model)
 #' }
-plot.apc<-function(x, quantiles=c(0.05,0.5,0.95), ...)
+plot.apc<-function(x, quantiles=c(0.05,0.5,0.95),
+                   convention=c("age","period","cohort","none"), ...)
 {
-  age<-as.array(x$samples$age)
+  convention <- match.arg(convention)
+  g <- .apc_regauge(x, convention)
+  age<-as.array(g$age)
   age<-apply(age,2,quantile,quantiles)
-  period<-as.array(x$samples$period)
+  period<-as.array(g$period)
   period<-apply(period,2,quantile,quantiles)
-  cohort<-as.array(x$samples$cohort)
+  cohort<-as.array(g$cohort)
   cohort<-apply(cohort,2,quantile,quantiles)
 
   q<-length(quantiles)
@@ -90,7 +104,7 @@ plot.apc<-function(x, quantiles=c(0.05,0.5,0.95), ...)
       for (i in 1:q)
         lines(period[i,],lty=lty[i])
       
-      periodcov<-as.array(x$samples$period)
+      periodcov<-as.array(g$period)
       for (i in 1:dim(periodcov)[1])
         for (j in 1:dim(periodcov)[3])
           periodcov[i,,j]<-periodcov[i,,j]/x$covariate$period[1:c]
@@ -131,7 +145,7 @@ plot.apc<-function(x, quantiles=c(0.05,0.5,0.95), ...)
       for (i in 1:q)
         lines(cohort[i,],lty=lty[i])
       
-      cohortcov<-as.array(x$samples$cohort)
+      cohortcov<-as.array(g$cohort)
       for (i in 1:dim(cohortcov)[1])
         for (j in 1:dim(cohortcov)[3])
           cohortcov[i,,j]<-cohortcov[i,,j]/x$covariate$cohort[1:c]

@@ -1,4 +1,16 @@
 # bamp 2.2.0
+* `plot()` and `effects()` now take a `convention` argument that fixes the
+  non-identified linear trend (drift) of a full age-period-cohort model for
+  display. The three effects are identifiable only up to a shared linear trend,
+  so summarising the raw samples lets the curves drift between runs. The default
+  `convention = "age"` removes the linear slope of the age effect (showing age
+  as curvature about a zero trend and putting the drift in the period and cohort
+  effects), which removes the dominant source of run-to-run non-reproducibility;
+  `"period"` and `"cohort"` pin the corresponding effect's slope instead, and
+  `convention = "none"` reproduces the previous (un-gauged) behaviour. The gauge
+  is display-only and applied per MCMC draw: the stored samples, the fitted
+  rates, the `predict()` projections and the DIC are all unchanged, and it is
+  ignored for models that are not full APC.
 * New `method = "pg"` engine: a joint sampler that combines Polya-Gamma data
   augmentation with a Laplace (Newton) Metropolis-Hastings refinement. Each
   sweep draws the intercept and the age, period and cohort effects jointly in
