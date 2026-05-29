@@ -66,7 +66,8 @@
 ## --- one MCMC chain (joint one-block update) -------------------------------
 .bamp_pg_chain <- function(Y, N, ord_a, ord_p, ord_c, ppa,
                            hyper, n_iter, burn_in, thin, seed,
-                           prior_scale = TRUE, init = "empirical") {
+                           prior_scale = TRUE, init = "empirical",
+                           overdisp = FALSE, z_hyper = c(1, 0.05)) {
   set.seed(seed)
   I <- nrow(Y); J <- ncol(Y); K <- ppa * (I - 1) + J
   has_a <- ord_a > 0; has_p <- ord_p > 0; has_c <- ord_c > 0
@@ -132,10 +133,18 @@
     if (has_p) { t <- sl(colSums(Y), colSums(N)) - mu; phi   <- t - mean(t) }
   }
   kappa <- lambda <- ny <- 1
+  ## overdispersion: an additive per-cell effect delta_ij ~ N(0, 1/zeta) in the
+  ## linear predictor, with precision zeta ~ Gamma(z_hyper). Under PG both have
+  ## closed-form conditionals (Gaussian for delta, Gamma for zeta). Only the
+  ## scalar precision is stored (the cell effects are re-sampled at predict time),
+  ## matching the iwls output contract.
+  has_od <- isTRUE(overdisp)
+  zeta <- z_hyper[1] / z_hyper[2]
+  delta_ij <- matrix(0, I, J)
 
   nkeep <- length(seq(burn_in + 1, n_iter, by = thin))
   out_theta <- matrix(0, nkeep, I); out_phi <- matrix(0, nkeep, J); out_psi <- matrix(0, nkeep, K)
-  out_kap <- out_lam <- out_ny <- out_mu <- out_dev <- numeric(nkeep)
+  out_kap <- out_lam <- out_ny <- out_mu <- out_dev <- out_zeta <- numeric(nkeep)
   ksi_sum <- matrix(0, I, J); ksi_n <- 0L; keep <- 0L
 
   ## constant pieces of b
@@ -172,14 +181,26 @@
   acc_mh <- 0L; n_mh <- 0L
 
   for (it in 1:n_iter) {
-    eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J)
+    eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
+           (if (has_od) delta_ij else 0)
     omega <- matrix(.pg_rpg(as.numeric(N), as.numeric(eta)), I, J)
 
     ## ---- Polya-Gamma joint Gibbs draw of (mu, theta, phi, psi) ----
-    b <- numeric(P); b[ia] <- b_mu0
-    if (has_a) b[ith] <- b_th0
-    if (has_p) b[iph] <- b_ph0
-    if (has_c) b[ips] <- b_ps0
+    ## the smooth block's working response removes the cell effect: the target is
+    ## omega*(z - delta) with z = ymh/omega, i.e. b = X'(ymh - omega*delta).
+    b <- numeric(P)
+    if (has_od) {
+      ymh_b <- ymh - omega * delta_ij
+      b[ia] <- sum(ymh_b)
+      if (has_a) b[ith] <- rowSums(ymh_b)
+      if (has_p) b[iph] <- colSums(ymh_b)
+      if (has_c) { v <- numeric(K); ag <- rowsum(as.numeric(ymh_b), cohv); v[as.integer(rownames(ag))] <- ag; b[ips] <- v }
+    } else {
+      b[ia] <- b_mu0
+      if (has_a) b[ith] <- b_th0
+      if (has_p) b[iph] <- b_ph0
+      if (has_c) b[ips] <- b_ps0
+    }
     Q <- assemble_prec(omega, kappa, lambda, ny)
     ## ridge to make the (intrinsically rank-deficient) Q numerically PD; the
     ## constraints remove the corresponding null directions
@@ -190,6 +211,15 @@
     if (has_p) phi   <- beta[iph]
     if (has_c) psi   <- beta[ips]
 
+    ## ---- overdispersion: cell effect delta_ij | rest ~ N, precision zeta | delta ~ Gamma
+    if (has_od) {
+      eta0 <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J)   # smooth predictor
+      precd <- omega + zeta
+      mden <- (ymh - omega * eta0) / precd                             # = omega*(z - eta0)/precd
+      delta_ij <- matrix(mden + rnorm(I * J) / sqrt(precd), I, J)
+      zeta <- rgamma(1, z_hyper[1] + 0.5 * I * J, z_hyper[2] + 0.5 * sum(delta_ij^2))
+    }
+
     ## ---- precisions: centred (sufficient) Gamma full conditionals ----
     if (has_a) kappa  <- rgamma(1, sa$a + sa$rank / 2, sa$b + 0.5 * as.numeric(theta %*% sa$K %*% theta))
     if (has_p) lambda <- rgamma(1, sp$a + sp$rank / 2, sp$b + 0.5 * as.numeric(phi   %*% sp$K %*% phi))
@@ -199,7 +229,8 @@
     ## (Yu & Meng 2011).  Rescaling the effect and its precision together breaks
     ## the precision-effect coupling that otherwise slows mixing, especially for
     ## the smoothing of weakly-informed cells in highly informative data. -------
-    eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J)
+    eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
+           (if (has_od) delta_ij else 0)
     zwork <- ymh / omega
     nc_step <- function(x, prec, a, b, make_deta) {
       xt <- sqrt(prec) * x
@@ -227,7 +258,8 @@
       ps_ <- if (has_c) bv[ips] else NULL
       e <- mu_ + (if (has_a) matrix(bv[ith], I, J) else 0) +
                  (if (has_p) matrix(bv[iph], I, J, byrow = TRUE) else 0) +
-                 (if (has_c) matrix(ps_[cohidx], I, J) else 0)
+                 (if (has_c) matrix(ps_[cohidx], I, J) else 0) +
+                 (if (has_od) delta_ij else 0)          # cell effect is a fixed offset here
       pp <- plogis(e); Wt <- N * pp * (1 - pp); ymnp <- Y - N * pp
       g <- numeric(P); g[ia] <- sum(ymnp)
       if (has_a) g[ith] <- rowSums(ymnp) - kappa  * as.numeric(sa$K %*% bv[ith])
@@ -264,7 +296,9 @@
       keep <- keep + 1L
       out_theta[keep, ] <- theta; out_phi[keep, ] <- phi; out_psi[keep, ] <- psi
       out_kap[keep] <- kappa; out_lam[keep] <- lambda; out_ny[keep] <- ny; out_mu[keep] <- mu
-      eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J)
+      out_zeta[keep] <- zeta
+      eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
+             (if (has_od) delta_ij else 0)
       ksi_sum <- ksi_sum + eta; ksi_n <- ksi_n + 1L
       pr <- 1 / (1 + exp(-eta)); yhat <- N * pr
       d1 <- 2 * ((N - Y) * log((N - Y) / (N - yhat)))
@@ -275,6 +309,7 @@
   }
   list(theta = out_theta, phi = out_phi, psi = out_psi,
        kappa = out_kap, lambda = out_lam, ny = out_ny, my = out_mu,
+       zeta = if (has_od) out_zeta else NULL,
        deviance = out_dev, ksi = ksi_sum / ksi_n,
        mh_accept = if (n_mh > 0) acc_mh / n_mh else NA_real_)
 }
@@ -282,10 +317,12 @@
 ## --- driver: run chains (optionally in parallel) ---------------------------
 .bamp_pg <- function(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
                      n_iter, burn_in, thin, n_chains, parallel = FALSE,
-                     prior_scale = TRUE, verbose = FALSE) {
+                     prior_scale = TRUE, verbose = FALSE,
+                     overdisp = FALSE, z_hyper = c(1, 0.05)) {
   seeds <- sample.int(.Machine$integer.max, n_chains)
   runner <- function(s) .bamp_pg_chain(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
-                                       n_iter, burn_in, thin, s, prior_scale)
+                                       n_iter, burn_in, thin, s, prior_scale,
+                                       overdisp = overdisp, z_hyper = z_hyper)
   ## Honour a numeric `parallel` as the requested number of cores (matching the
   ## iwls path, where cores <- parallel); a bare TRUE means getOption('mc.cores').
   ## Capped at the number of chains. Previously cores were hard-capped at 2, so

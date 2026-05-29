@@ -1,4 +1,12 @@
 # bamp 2.2.0
+* The `method = "pg"` engine now supports overdispersion (`overdisp = TRUE`)
+  natively instead of falling back to `method = "iwls"`. The cell-level random
+  effect is added as an extra conditionally-Gaussian block (with a Gamma
+  full-conditional for its precision) in the Polya-Gamma Gibbs sweep, so there
+  is still no Metropolis tuning. It reproduces the iwls overdispersion estimates
+  (the overdispersion precision, the DIC and the smooth effect curves all agree
+  to within Monte-Carlo error on simulated and real data). Heterogeneity and
+  covariate models still fall back to `method = "iwls"`.
 * `plot()` of an apc object now works for any number of plotted `quantiles`:
   a single quantile no longer errors with "incorrect number of dimensions",
   and vectors of length 2 or 4 no longer error with "invalid line type" (the

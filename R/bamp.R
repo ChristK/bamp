@@ -75,14 +75,13 @@ function(cases, population,
   output=apc()
   method <- match.arg(method)
 
-  ## The Polya-Gamma Gibbs engine currently supports plain RW1/RW2 priors
-  ## (no heterogeneity, overdispersion or covariates); fall back to IWLS otherwise.
+  ## The Polya-Gamma Gibbs engine supports plain RW1/RW2 priors and
+  ## overdispersion; it falls back to IWLS for heterogeneity and covariates.
   if (method == "pg") {
     uses_het <- any(grepl("het", c(age, period, cohort)))
-    if (uses_het || isTRUE(overdisp) ||
-        !is.null(period_covariate) || !is.null(cohort_covariate)) {
-      warning("method='pg' does not yet support heterogeneity, overdispersion ",
-              "or covariates; using method='iwls'.", call. = FALSE)
+    if (uses_het || !is.null(period_covariate) || !is.null(cohort_covariate)) {
+      warning("method='pg' does not yet support heterogeneity or covariates; ",
+              "using method='iwls'.", call. = FALSE)
       method <- "iwls"
     }
   }
@@ -617,15 +616,21 @@ if (verbose)
    ## as many cores as the iwls path would (it caps internally at n_chains)
    pg <- .bamp_pg(Ymat, Nmat, ord_a, ord_p, ord_c, round(periods_per_agegroup),
                   hyper_pg, number_of_iterations, burn_in, step, chains,
-                  parallel = parallel, prior_scale = prior_scale, verbose = verbose)
+                  parallel = parallel, prior_scale = prior_scale, verbose = verbose,
+                  overdisp = (z_mode == 1), z_hyper = c(z_hyperpar_a, z_hyperpar_b))
    sumkick <- chains
    mkmat <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(r[[field]])))
    mkvec <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r[[field]], ncol = 1))))
    theta <- mkmat("theta"); phi <- mkmat("phi"); psi <- mkmat("psi")
    my <- mkvec("my"); kappa <- mkvec("kappa"); lambda <- mkvec("lambda")
    ny <- mkvec("ny"); deviance <- mkvec("deviance")
-   ## het / overdispersion components are not used by the pg model
-   theta2 <- phi2 <- psi2 <- kappa2 <- lambda2 <- ny2 <- delta <-
+   ## het components are not used by the pg model (zero-filled for object compat)
+   theta2 <- phi2 <- psi2 <- kappa2 <- lambda2 <- ny2 <-
+     coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(0, nrow = length(r$my), ncol = 1))))
+   ## overdispersion precision (zeta); stored as samples$overdispersion when z_mode==1
+   delta <- if (z_mode == 1)
+     coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r$zeta, ncol = 1))))
+   else
      coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(0, nrow = length(r$my), ncol = 1))))
    ## per-chain ksi in the agegroup-major layout expected downstream
    ksi <- lapply(pg, function(r) as.numeric(t(r$ksi)))
