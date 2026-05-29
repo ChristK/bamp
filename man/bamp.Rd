@@ -20,7 +20,9 @@ bamp(
     c(1, 0.05)),
   dic = TRUE,
   parallel = TRUE,
-  verbose = FALSE
+  verbose = FALSE,
+  method = c("iwls", "pg"),
+  prior_scale = FALSE
 )
 }
 \arguments{
@@ -51,6 +53,27 @@ bamp(
 \item{parallel}{logical, should computation be done in parallel. This uses the parallel package, which does not allow parallel computing under Windows.}
 
 \item{verbose}{verbose mode}
+
+\item{method}{MCMC engine. \code{"iwls"} (default) is the original block
+Metropolis-Hastings sampler with IWLS proposals. \code{"pg"} is a
+Polya-Gamma Gibbs sampler (Polson, Scott & Windle 2013) that draws the
+intercept and the age, period and cohort effects jointly in one exact Gibbs
+step. It has no Metropolis tuning, never restarts on low acceptance and does
+not prune chains; it is markedly more robust for RW2 priors. It currently
+supports plain RW1/RW2 models (no heterogeneity, overdispersion or
+covariates); other models fall back to \code{"iwls"} with a warning. The
+Polya-Gamma weights use a normal approximation that is essentially exact for
+the large population counts of incidence/mortality data; it needs far fewer
+iterations than the default but mixes more slowly in cells with very few
+events.}
+
+\item{prior_scale}{logical; only used by \code{method="pg"}. If \code{TRUE},
+the intrinsic random-walk structure matrices are scaled to unit generalised
+variance (Sorbye & Rue 2014) so that a single hyper-prior is comparable
+across data sets of different size and grid. The default is \code{FALSE},
+which keeps the same prior parameterisation (and the same default
+hyper-parameters) as \code{method="iwls"}; if you set it to \code{TRUE} you
+should choose hyper-parameters appropriate for the scaled prior.}
 }
 \description{
 Bayesian Age-Period-Cohort Modeling for the analyze of incidence or mortality data on the Lexis diagram.

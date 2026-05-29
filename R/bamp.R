@@ -14,6 +14,25 @@
 #' @param dic logical. If true. DIC will be computed
 #' @param parallel logical, should computation be done in parallel. This uses the parallel package, which does not allow parallel computing under Windows.
 #' @param verbose verbose mode
+#' @param method MCMC engine. \code{"iwls"} (default) is the original block
+#' Metropolis-Hastings sampler with IWLS proposals. \code{"pg"} is a
+#' Polya-Gamma Gibbs sampler (Polson, Scott & Windle 2013) that draws the
+#' intercept and the age, period and cohort effects jointly in one exact Gibbs
+#' step. It has no Metropolis tuning, never restarts on low acceptance and does
+#' not prune chains; it is markedly more robust for RW2 priors. It currently
+#' supports plain RW1/RW2 models (no heterogeneity, overdispersion or
+#' covariates); other models fall back to \code{"iwls"} with a warning. The
+#' Polya-Gamma weights use a normal approximation that is essentially exact for
+#' the large population counts of incidence/mortality data; it needs far fewer
+#' iterations than the default but mixes more slowly in cells with very few
+#' events.
+#' @param prior_scale logical; only used by \code{method="pg"}. If \code{TRUE},
+#' the intrinsic random-walk structure matrices are scaled to unit generalised
+#' variance (Sorbye & Rue 2014) so that a single hyper-prior is comparable
+#' across data sets of different size and grid. The default is \code{FALSE},
+#' which keeps the same prior parameterisation (and the same default
+#' hyper-parameters) as \code{method="iwls"}; if you set it to \code{TRUE} you
+#' should choose hyper-parameters appropriate for the scaled prior.
 #'
 #' @description 
 #' Bayesian Age-Period-Cohort Modeling for the analyze of incidence or mortality data on the Lexis diagram.
@@ -48,8 +67,22 @@ function(cases, population,
         mcmc.options=list("number_of_iterations"=100000, "burn_in"=50000, "step"=50, "tuning"=500),
         hyperpar=list("age"=c(1,0.5), "period"=c(1,0.0005), "cohort"=c(1,0.0005), "overdisp"=c(1,0.05)),
         dic=TRUE,
-        parallel=TRUE, verbose=FALSE){
+        parallel=TRUE, verbose=FALSE,
+        method=c("iwls","pg"), prior_scale=FALSE){
   output=apc()
+  method <- match.arg(method)
+
+  ## The Polya-Gamma Gibbs engine currently supports plain RW1/RW2 priors
+  ## (no heterogeneity, overdispersion or covariates); fall back to IWLS otherwise.
+  if (method == "pg") {
+    uses_het <- any(grepl("het", c(age, period, cohort)))
+    if (uses_het || isTRUE(overdisp) ||
+        !is.null(period_covariate) || !is.null(cohort_covariate)) {
+      warning("method='pg' does not yet support heterogeneity, overdispersion ",
+              "or covariates; using method='iwls'.", call. = FALSE)
+      method <- "iwls"
+    }
+  }
 
   age_hyperpar_a=hyperpar$age[1]
   age_hyperpar_b=hyperpar$age[2]
@@ -567,6 +600,32 @@ if (verbose)
             age_hyperpar_a2, age_hyperpar_b2, period_hyperpar_a2, period_hyperpar_b2, cohort_hyperpar_a2, cohort_hyperpar_b2,
             z_hyperpar_a, z_hyperpar_b)
 
+ if (method == "pg") {
+   ## ---- Polya-Gamma Gibbs engine (exact conditionals, no MH tuning) ----
+   ord_of <- function(b) if (b %in% c(1,3)) 1L else if (b %in% c(2,4)) 2L else 0L
+   ord_a <- ord_of(age_block); ord_p <- ord_of(period_block); ord_c <- ord_of(cohort_block)
+   Ymat <- matrix(as.integer(cases),      number_of_agegroups, number_of_periods)
+   Nmat <- matrix(as.integer(population),  number_of_agegroups, number_of_periods)
+   hyper_pg <- list(age    = c(age_hyperpar_a,    age_hyperpar_b),
+                    period = c(period_hyperpar_a, period_hyperpar_b),
+                    cohort = c(cohort_hyperpar_a, cohort_hyperpar_b))
+   pg_par <- isTRUE(parallel) || (is.numeric(parallel) && parallel > 1)
+   if (verbose) cat(paste0("Running Polya-Gamma Gibbs engine in ", chains, " chains.\n"))
+   pg <- .bamp_pg(Ymat, Nmat, ord_a, ord_p, ord_c, round(periods_per_agegroup),
+                  hyper_pg, number_of_iterations, burn_in, step, chains,
+                  parallel = pg_par, prior_scale = prior_scale, verbose = verbose)
+   sumkick <- chains
+   mkmat <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(r[[field]])))
+   mkvec <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r[[field]], ncol = 1))))
+   theta <- mkmat("theta"); phi <- mkmat("phi"); psi <- mkmat("psi")
+   my <- mkvec("my"); kappa <- mkvec("kappa"); lambda <- mkvec("lambda")
+   ny <- mkvec("ny"); deviance <- mkvec("deviance")
+   ## het / overdispersion components are not used by the pg model
+   theta2 <- phi2 <- psi2 <- kappa2 <- lambda2 <- ny2 <- delta <-
+     coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(0, nrow = length(r$my), ncol = 1))))
+   ## per-chain ksi in the agegroup-major layout expected downstream
+   ksi <- lapply(pg, function(r) as.numeric(t(r$ksi)))
+ } else {
  singlerun<-function(i,cases,population,blocks,numbers,periods_per_agegroup,
                      numbersmcmc,modelsettings,allhyper,theta.sample,phi.sample,psi.sample,
                      theta2.sample,phi2.sample,psi2.sample,ksi,
@@ -717,6 +776,7 @@ ny2<-coda::as.mcmc.list(ny2)
 my<-coda::as.mcmc.list(my)
 delta<-coda::as.mcmc.list(delta)
 deviance<-coda::as.mcmc.list(deviance)
+ }
 
 
  samples=list("intercept"=my, "age"=theta, "period"=phi, "cohort"=psi)
