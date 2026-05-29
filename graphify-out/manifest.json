@@ -1,0 +1,207 @@
+{
+  "/home/ckyprid/GH_projects/bamp/R/apc-class.R": {
+    "mtime": 1780066733.6599956,
+    "ast_hash": "338440cfc9b96be79a8fd89f7c6a698b",
+    "semantic_hash": "338440cfc9b96be79a8fd89f7c6a698b"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/bamp.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "398a620a29958f0b4f267d90ac7966dc",
+    "semantic_hash": "398a620a29958f0b4f267d90ac7966dc"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/check_apc.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "00329caa31562ba176260ac5312b7737",
+    "semantic_hash": "00329caa31562ba176260ac5312b7737"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/coh.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "a45913cfaa7242eba3f04ded16ec1d6f",
+    "semantic_hash": "a45913cfaa7242eba3f04ded16ec1d6f"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/datasets.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "f29e05a3c974be4b7e6ea638eee0fc64",
+    "semantic_hash": "f29e05a3c974be4b7e6ea638eee0fc64"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/effects_apc.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "569e8600eb933bc2737acf57a0e4d3ef",
+    "semantic_hash": "569e8600eb933bc2737acf57a0e4d3ef"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/onattach.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "c2e4dbfaa0f78dd8e3e6b462717a6e36",
+    "semantic_hash": "c2e4dbfaa0f78dd8e3e6b462717a6e36"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/plot_apc.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "bbd2398227b5fe8861ca807feb939608",
+    "semantic_hash": "bbd2398227b5fe8861ca807feb939608"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/pr_aus_ksi_berechnen.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "e14ce2ce1ef6190b32235cef773a1736",
+    "semantic_hash": "e14ce2ce1ef6190b32235cef773a1736"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/predict_apc.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "02ed478dc4fb5fdb7f5a4a28e94ed4f8",
+    "semantic_hash": "02ed478dc4fb5fdb7f5a4a28e94ed4f8"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/print_apc.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "cca2553eb8655b68652187f3bc062a3b",
+    "semantic_hash": "cca2553eb8655b68652187f3bc062a3b"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/simulate_apc.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "365c4cad560360a9e77cee4f97f445d7",
+    "semantic_hash": "365c4cad560360a9e77cee4f97f445d7"
+  },
+  "/home/ckyprid/GH_projects/bamp/R/zzz.R": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "72d30b1a291a5c0a1b9c0a2945223d28",
+    "semantic_hash": "72d30b1a291a5c0a1b9c0a2945223d28"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/bamp.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "23df9d4d2fb9d653de9259e1d1e84893",
+    "semantic_hash": "23df9d4d2fb9d653de9259e1d1e84893"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/bamp.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "be4bb09edcf50a049ca9de84ae7f89f8",
+    "semantic_hash": "be4bb09edcf50a049ca9de84ae7f89f8"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/block.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "55a2aedef123c0938c18198b6ab97d95",
+    "semantic_hash": "55a2aedef123c0938c18198b6ab97d95"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/block.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "1ad39fe952b94e6b900db0f654f920a0",
+    "semantic_hash": "1ad39fe952b94e6b900db0f654f920a0"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/init.c": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "64cc79503b749a1b025228b326336e47",
+    "semantic_hash": "64cc79503b749a1b025228b326336e47"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/l.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "c0fa1259c9af0b01b5fa93d08519ad5b",
+    "semantic_hash": "c0fa1259c9af0b01b5fa93d08519ad5b"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/l.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "5ce0681dfa83fed62adaab1d27dda9f0",
+    "semantic_hash": "5ce0681dfa83fed62adaab1d27dda9f0"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/matrix.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "3f467ecf61bb0d86d7eedf8a36bc5c11",
+    "semantic_hash": "3f467ecf61bb0d86d7eedf8a36bc5c11"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/matrix.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "c2f28c06b3906f2e36fde0abc9d9fba1",
+    "semantic_hash": "c2f28c06b3906f2e36fde0abc9d9fba1"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/mxs.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "469c745a602ff3a8b3ceeaa3d2667c74",
+    "semantic_hash": "469c745a602ff3a8b3ceeaa3d2667c74"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/mxs.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "4152c48e46340f7632ddcbf956675de0",
+    "semantic_hash": "4152c48e46340f7632ddcbf956675de0"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/praez.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "ca9c99e7cbe7bdb3322498c49452c26d",
+    "semantic_hash": "ca9c99e7cbe7bdb3322498c49452c26d"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/praez.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "acde997e71f1a71f7597a523e56a4ffb",
+    "semantic_hash": "acde997e71f1a71f7597a523e56a4ffb"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/update_my.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "5bf85e8e7498ab00ad9b12cf26186359",
+    "semantic_hash": "5bf85e8e7498ab00ad9b12cf26186359"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/update_my.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "3d871c8e9e1ac3ab30c7e3c854ef62e5",
+    "semantic_hash": "3d871c8e9e1ac3ab30c7e3c854ef62e5"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/zufall.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "3ff8ebd658ee4bd7f7b03f8612e3183a",
+    "semantic_hash": "3ff8ebd658ee4bd7f7b03f8612e3183a"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/zufall.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "b2643f0b9943d75733d2e1045dc5a45d",
+    "semantic_hash": "b2643f0b9943d75733d2e1045dc5a45d"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/zz_ksi.cc": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "6162803b6440b2edc1aac97767d8dac5",
+    "semantic_hash": "6162803b6440b2edc1aac97767d8dac5"
+  },
+  "/home/ckyprid/GH_projects/bamp/src/zz_ksi.h": {
+    "mtime": 1780066733.6639955,
+    "ast_hash": "161020e8def15ed984f8f37dbfddba47",
+    "semantic_hash": "161020e8def15ed984f8f37dbfddba47"
+  },
+  "/home/ckyprid/GH_projects/bamp/NEWS.md": {
+    "mtime": 1780066733.6599956,
+    "ast_hash": "6adb6040eb5ad84aa73561f92bc47a90",
+    "semantic_hash": "6adb6040eb5ad84aa73561f92bc47a90"
+  },
+  "/home/ckyprid/GH_projects/bamp/README.md": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "907b4b9972694a95269a2a77260ead00",
+    "semantic_hash": "907b4b9972694a95269a2a77260ead00"
+  },
+  "/home/ckyprid/GH_projects/bamp/inst/doc/bamp.html": {
+    "mtime": 1780066733.6609955,
+    "ast_hash": "d91d55c40fc4c1d2db4d217087a3b215",
+    "semantic_hash": "d91d55c40fc4c1d2db4d217087a3b215"
+  },
+  "/home/ckyprid/GH_projects/bamp/vignettes/modeling.html": {
+    "mtime": 1780066733.6649957,
+    "ast_hash": "523d34aa96be311b661ca04901e9a08a",
+    "semantic_hash": "523d34aa96be311b661ca04901e9a08a"
+  },
+  "/home/ckyprid/GH_projects/bamp/vignettes/prediction.html": {
+    "mtime": 1780066733.6649957,
+    "ast_hash": "94eb9e8403618f776f51e1956d7ff151",
+    "semantic_hash": "94eb9e8403618f776f51e1956d7ff151"
+  },
+  "/home/ckyprid/GH_projects/bamp/vignettes/simulation.html": {
+    "mtime": 1780066733.6659956,
+    "ast_hash": "781c0bdae4fac8036fb43f6adc25e946",
+    "semantic_hash": "781c0bdae4fac8036fb43f6adc25e946"
+  },
+  "/home/ckyprid/GH_projects/bamp/inst/doc/modeling.pdf": {
+    "mtime": 1780066733.6619956,
+    "ast_hash": "ff7b02c81f2d906bb0e8ed80fb1c07e3",
+    "semantic_hash": "ff7b02c81f2d906bb0e8ed80fb1c07e3"
+  },
+  "/home/ckyprid/GH_projects/bamp/inst/doc/prediction.pdf": {
+    "mtime": 1780066733.6619956,
+    "ast_hash": "743acd07f16f2c8d2dcf327c0828c4ac",
+    "semantic_hash": "743acd07f16f2c8d2dcf327c0828c4ac"
+  },
+  "/home/ckyprid/GH_projects/bamp/inst/doc/simulation.pdf": {
+    "mtime": 1780066733.6629956,
+    "ast_hash": "3ec5d63509284eeb2f9f881eb756eb7c",
+    "semantic_hash": "3ec5d63509284eeb2f9f881eb756eb7c"
+  }
+}
