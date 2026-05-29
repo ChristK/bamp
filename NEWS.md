@@ -1,11 +1,19 @@
 # bamp 2.2.0
-* New Polya-Gamma Gibbs engine, selected with `method = "pg"` in `bamp()`. It
-  draws the intercept and the age, period and cohort effects jointly in one
-  exact Gibbs step, so it has no Metropolis tuning, never restarts on low
-  acceptance and does not prune chains. It is much more robust for RW2 priors
-  (where the old engine often failed to converge) and matches the original
-  engine's estimates on RW1 models. Optional Sorbye & Rue (2014) scaling of the
-  random-walk priors is available via `prior_scale = TRUE`.
+* New `method = "pg"` engine: a joint sampler that combines Polya-Gamma data
+  augmentation with a Laplace (Newton) Metropolis-Hastings refinement. Each
+  sweep draws the intercept and the age, period and cohort effects jointly in
+  one exact Gibbs step (so there is no Metropolis tuning, no acceptance-rate
+  restart and no chain pruning), then a joint Newton proposal against the true
+  binomial likelihood refines them. The Gibbs step gives robustness (it fixes
+  the RW2 models, where the old engine routinely failed to converge); the
+  Newton step gives fast mixing in the cells that pure Polya-Gamma moves only in
+  tiny steps -- in particular the high-population, rare-event cells typical of
+  incidence/mortality data, which the Gibbs-only sampler could not converge even
+  in hundreds of thousands of iterations but the hybrid converges in a few
+  thousand. It matches the original engine's estimates on RW1 models. Optional
+  Sorbye & Rue (2014) scaling of the random-walk priors is available via
+  `prior_scale = TRUE`. The engine supports plain RW1/RW2 models; heterogeneity,
+  overdispersion and covariate models fall back to `method = "iwls"`.
 * `checkConvergence()` now assesses the *identified* quantities (smoothing
   precisions, intercept and the fitted log-odds in each Lexis cell) instead of
   the raw age/period/cohort effects. Because the three effects share a

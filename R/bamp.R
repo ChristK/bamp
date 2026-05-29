@@ -15,17 +15,20 @@
 #' @param parallel logical, should computation be done in parallel. This uses the parallel package, which does not allow parallel computing under Windows.
 #' @param verbose verbose mode
 #' @param method MCMC engine. \code{"iwls"} (default) is the original block
-#' Metropolis-Hastings sampler with IWLS proposals. \code{"pg"} is a
-#' Polya-Gamma Gibbs sampler (Polson, Scott & Windle 2013) that draws the
-#' intercept and the age, period and cohort effects jointly in one exact Gibbs
-#' step. It has no Metropolis tuning, never restarts on low acceptance and does
-#' not prune chains; it is markedly more robust for RW2 priors. It currently
-#' supports plain RW1/RW2 models (no heterogeneity, overdispersion or
-#' covariates); other models fall back to \code{"iwls"} with a warning. The
-#' Polya-Gamma weights use a normal approximation that is essentially exact for
-#' the large population counts of incidence/mortality data; it needs far fewer
-#' iterations than the default but mixes more slowly in cells with very few
-#' events.
+#' Metropolis-Hastings sampler with IWLS proposals. \code{"pg"} is a joint
+#' sampler that combines Polya-Gamma data augmentation (Polson, Scott & Windle
+#' 2013) with a Laplace (Newton) Metropolis-Hastings refinement: each sweep
+#' draws the intercept and the age, period and cohort effects jointly in one
+#' exact Gibbs step and then refines them with a joint Newton proposal against
+#' the true binomial likelihood. It has no Metropolis tuning, never restarts on
+#' low acceptance and does not prune chains; it is markedly more robust for RW2
+#' priors and converges the high-population, rare-event cells of
+#' incidence/mortality data that the Gibbs step alone mixes only slowly. It
+#' currently supports plain RW1/RW2 models; heterogeneity, overdispersion and
+#' covariate models fall back to \code{"iwls"} with a warning. The Polya-Gamma
+#' weights use a normal approximation that is essentially exact for the large
+#' population counts of incidence/mortality data, so it typically needs far
+#' fewer iterations than the default.
 #' @param prior_scale logical; only used by \code{method="pg"}. If \code{TRUE},
 #' the intrinsic random-walk structure matrices are scaled to unit generalised
 #' variance (Sorbye & Rue 2014) so that a single hyper-prior is comparable

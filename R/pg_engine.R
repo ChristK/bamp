@@ -66,7 +66,7 @@
 ## --- one MCMC chain (joint one-block update) -------------------------------
 .bamp_pg_chain <- function(Y, N, ord_a, ord_p, ord_c, ppa,
                            hyper, n_iter, burn_in, thin, seed,
-                           prior_scale = TRUE) {
+                           prior_scale = TRUE, init = "empirical") {
   set.seed(seed)
   I <- nrow(Y); J <- ncol(Y); K <- ppa * (I - 1) + J
   has_a <- ord_a > 0; has_p <- ord_p > 0; has_c <- ord_c > 0
@@ -112,10 +112,25 @@
   if (has_a && has_p && has_c && ord_p == 2)
     Arows <- c(Arows, list(mkrow(iph, (1:J) - mean(1:J))))
   A <- if (length(Arows)) do.call(rbind, Arows) else NULL
+  ## orthonormal basis of the constraint null space {beta : A beta = 0}, used by
+  ## the Laplace-MH refinement to sample in the (unconstrained) free coordinates
+  Zbasis <- if (is.null(A)) diag(P) else {
+    sv <- svd(A, nu = 0, nv = P); sv$v[, (nrow(A) + 1):P, drop = FALSE]
+  }
 
   ## starting values
   p0 <- sum(Y) / sum(N); mu <- log(p0 / (1 - p0))
   theta <- numeric(I); phi <- numeric(J); psi <- numeric(K)
+  if (identical(init, "empirical")) {
+    ## start age/period at their (centred) marginal empirical log-odds so the
+    ## chain begins near the data structure -- short burn-in, and all chains
+    ## start in the same region
+    sl <- function(num, den) {
+      p <- pmin(pmax((num + 0.5) / (den + 1), 1e-8), 1 - 1e-8); log(p / (1 - p))
+    }
+    if (has_a) { t <- sl(rowSums(Y), rowSums(N)) - mu; theta <- t - mean(t) }
+    if (has_p) { t <- sl(colSums(Y), colSums(N)) - mu; phi   <- t - mean(t) }
+  }
   kappa <- lambda <- ny <- 1
 
   nkeep <- length(seq(burn_in + 1, n_iter, by = thin))
@@ -129,34 +144,46 @@
   b_ph0 <- if (has_p) colSums(ymh) else NULL
   b_ps0 <- if (has_c) { v <- numeric(K); a <- rowsum(as.numeric(ymh), cohv); v[as.integer(rownames(a))] <- a; v } else NULL
 
+  ## assemble the joint precision X' diag(w) X + prior for a per-cell weight w
+  ## (w = Polya-Gamma omega for the Gibbs draw, or the Fisher weight N p(1-p)
+  ## for the Laplace-MH proposal). Returns the P x P precision matrix.
+  assemble_prec <- function(w, kap, lam, nyv) {
+    Qm <- matrix(0, P, P); wv <- as.numeric(w)
+    rs <- rowSums(w); cs <- colSums(w)
+    TP <- PP <- NULL
+    if (has_a && has_c) { TP <- matrix(0, I, K); TP[idxT] <- wv }
+    if (has_p && has_c) { PP <- matrix(0, J, K); PP[idxP] <- wv }
+    Qm[ia, ia] <- sum(w)
+    if (has_a) { Qm[ia, ith] <- rs; Qm[ith, ia] <- rs; Qm[ith, ith] <- diag(rs, I) + kap * sa$K }
+    if (has_p) { Qm[ia, iph] <- cs; Qm[iph, ia] <- cs; Qm[iph, iph] <- diag(cs, J) + lam * sp$K }
+    if (has_c) {
+      csum <- if (!is.null(TP)) colSums(TP) else if (!is.null(PP)) colSums(PP)
+              else { v <- numeric(K); ag <- rowsum(wv, cohv); v[as.integer(rownames(ag))] <- ag; v }
+      Qm[ia, ips] <- csum; Qm[ips, ia] <- csum; Qm[ips, ips] <- diag(csum, K) + nyv * sc$K
+    }
+    if (has_a && has_p) { Qm[ith, iph] <- w; Qm[iph, ith] <- t(w) }
+    if (!is.null(TP)) { Qm[ith, ips] <- TP; Qm[ips, ith] <- t(TP) }
+    if (!is.null(PP)) { Qm[iph, ips] <- PP; Qm[ips, iph] <- t(PP) }
+    Qm
+  }
+  ## numerically stable log(1 + exp(e))
+  softplus <- function(e) ifelse(e > 0, e + log1p(exp(-e)), log1p(exp(e)))
+
+  acc_mh <- 0L; n_mh <- 0L
+
   for (it in 1:n_iter) {
     eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J)
     omega <- matrix(.pg_rpg(as.numeric(N), as.numeric(eta)), I, J)
 
-    ## ---- assemble joint precision Q (P x P) and rhs b ----
-    Q <- matrix(0, P, P); b <- numeric(P)
-    omv <- as.numeric(omega)
-    rs <- rowSums(omega); cs <- colSums(omega); tot <- sum(omega)
-    TPsi <- PPsi <- NULL
-    if (has_a && has_c) { TPsi <- matrix(0, I, K); TPsi[idxT] <- omv }
-    if (has_p && has_c) { PPsi <- matrix(0, J, K); PPsi[idxP] <- omv }
-    if (has_c) csum <- if (!is.null(TPsi)) colSums(TPsi)
-                       else if (!is.null(PPsi)) colSums(PPsi)
-                       else { v <- numeric(K); ag <- rowsum(omv, cohv); v[as.integer(rownames(ag))] <- ag; v }
-    Q[ia, ia] <- tot; b[ia] <- b_mu0
-    if (has_a) { Q[ia, ith] <- rs; Q[ith, ia] <- rs
-                 Q[ith, ith] <- diag(rs, I) + kappa * sa$K; b[ith] <- b_th0 }
-    if (has_p) { Q[ia, iph] <- cs; Q[iph, ia] <- cs
-                 Q[iph, iph] <- diag(cs, J) + lambda * sp$K; b[iph] <- b_ph0 }
-    if (has_c) { Q[ia, ips] <- csum; Q[ips, ia] <- csum
-                 Q[ips, ips] <- diag(csum, K) + ny * sc$K; b[ips] <- b_ps0 }
-    if (has_a && has_p) { Q[ith, iph] <- omega; Q[iph, ith] <- t(omega) }
-    if (!is.null(TPsi)) { Q[ith, ips] <- TPsi; Q[ips, ith] <- t(TPsi) }
-    if (!is.null(PPsi)) { Q[iph, ips] <- PPsi; Q[ips, iph] <- t(PPsi) }
+    ## ---- Polya-Gamma joint Gibbs draw of (mu, theta, phi, psi) ----
+    b <- numeric(P); b[ia] <- b_mu0
+    if (has_a) b[ith] <- b_th0
+    if (has_p) b[iph] <- b_ph0
+    if (has_c) b[ips] <- b_ps0
+    Q <- assemble_prec(omega, kappa, lambda, ny)
     ## ridge to make the (intrinsically rank-deficient) Q numerically PD; the
-    ## constraints below remove the corresponding null directions
+    ## constraints remove the corresponding null directions
     diag(Q) <- diag(Q) + 1e-6 * mean(diag(Q))
-
     beta <- .pg_draw_block(Q, b, A)
     mu <- beta[ia]
     if (has_a) theta <- beta[ith]
@@ -188,6 +215,51 @@
     if (has_p) { r <- nc_step(phi,   lambda, sp$a, sp$b, function(d) matrix(d, I, J, byrow = TRUE)); phi <- r$x; lambda <- r$prec }
     if (has_c) { r <- nc_step(psi,   ny,     sc$a, sc$b, function(d) matrix(d[cohidx], I, J));      psi   <- r$x; ny     <- r$prec }
 
+    ## ---- Laplace (Newton) Metropolis-Hastings refinement -------------------
+    ## Pure Polya-Gamma draws move weakly-informed cells in tiny steps because
+    ## the augmented conditional is far tighter than the marginal. This step
+    ## proposes a joint Newton move against the TRUE binomial likelihood using
+    ## the Fisher weight N p(1-p) (wide where data are sparse), in the free
+    ## coordinates gamma (beta = Z gamma), so it mixes those cells properly.
+    state <- function(bv) {
+      mu_ <- bv[ia]
+      th_ <- if (has_a) bv[ith] else 0; ph_ <- if (has_p) bv[iph] else 0
+      ps_ <- if (has_c) bv[ips] else NULL
+      e <- mu_ + (if (has_a) matrix(bv[ith], I, J) else 0) +
+                 (if (has_p) matrix(bv[iph], I, J, byrow = TRUE) else 0) +
+                 (if (has_c) matrix(ps_[cohidx], I, J) else 0)
+      pp <- plogis(e); Wt <- N * pp * (1 - pp); ymnp <- Y - N * pp
+      g <- numeric(P); g[ia] <- sum(ymnp)
+      if (has_a) g[ith] <- rowSums(ymnp) - kappa  * as.numeric(sa$K %*% bv[ith])
+      if (has_p) g[iph] <- colSums(ymnp) - lambda * as.numeric(sp$K %*% bv[iph])
+      if (has_c) { cg <- numeric(K); ag <- rowsum(as.numeric(ymnp), cohv)
+                   cg[as.integer(rownames(ag))] <- ag
+                   g[ips] <- cg - ny * as.numeric(sc$K %*% ps_) }
+      H <- assemble_prec(Wt, kappa, lambda, ny); diag(H) <- diag(H) + 1e-6 * mean(diag(H))
+      Hg <- crossprod(Zbasis, H %*% Zbasis); gg <- as.numeric(crossprod(Zbasis, g))
+      R <- chol(Hg)
+      mean_g <- as.numeric(crossprod(Zbasis, bv)) + backsolve(R, forwardsolve(t(R), gg))
+      lp <- sum(Y * e - N * softplus(e)) -
+            0.5 * ((if (has_a) kappa  * as.numeric(bv[ith] %*% sa$K %*% bv[ith]) else 0) +
+                   (if (has_p) lambda * as.numeric(bv[iph] %*% sp$K %*% bv[iph]) else 0) +
+                   (if (has_c) ny     * as.numeric(ps_     %*% sc$K %*% ps_)     else 0))
+      list(R = R, mean_g = mean_g, lp = lp, gamma = as.numeric(crossprod(Zbasis, bv)))
+    }
+    bcur <- numeric(P); bcur[ia] <- mu
+    if (has_a) bcur[ith] <- theta; if (has_p) bcur[iph] <- phi; if (has_c) bcur[ips] <- psi
+    cur <- state(bcur)
+    gstar <- cur$mean_g + backsolve(cur$R, rnorm(length(cur$mean_g)))
+    bstar <- as.numeric(Zbasis %*% gstar)
+    prop <- state(bstar)
+    logq <- function(R, x, m) sum(log(diag(R))) - 0.5 * sum((R %*% (x - m))^2)
+    la <- prop$lp - cur$lp + logq(prop$R, cur$gamma, prop$mean_g) - logq(cur$R, gstar, cur$mean_g)
+    n_mh <- n_mh + 1L
+    if (is.finite(la) && log(runif(1)) < la) {
+      acc_mh <- acc_mh + 1L
+      mu <- bstar[ia]
+      if (has_a) theta <- bstar[ith]; if (has_p) phi <- bstar[iph]; if (has_c) psi <- bstar[ips]
+    }
+
     if (it > burn_in && ((it - burn_in) %% thin == 0)) {
       keep <- keep + 1L
       out_theta[keep, ] <- theta; out_phi[keep, ] <- phi; out_psi[keep, ] <- psi
@@ -203,7 +275,8 @@
   }
   list(theta = out_theta, phi = out_phi, psi = out_psi,
        kappa = out_kap, lambda = out_lam, ny = out_ny, my = out_mu,
-       deviance = out_dev, ksi = ksi_sum / ksi_n)
+       deviance = out_dev, ksi = ksi_sum / ksi_n,
+       mh_accept = if (n_mh > 0) acc_mh / n_mh else NA_real_)
 }
 
 ## --- driver: run chains (optionally in parallel) ---------------------------
