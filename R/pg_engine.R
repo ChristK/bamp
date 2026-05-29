@@ -286,8 +286,15 @@
   seeds <- sample.int(.Machine$integer.max, n_chains)
   runner <- function(s) .bamp_pg_chain(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
                                        n_iter, burn_in, thin, s, prior_scale)
-  if (isTRUE(parallel) && .Platform$OS.type != "windows") {
-    cores <- max(1L, min(n_chains, getOption("mc.cores", 2L)))
+  ## Honour a numeric `parallel` as the requested number of cores (matching the
+  ## iwls path, where cores <- parallel); a bare TRUE means getOption('mc.cores').
+  ## Capped at the number of chains. Previously cores were hard-capped at 2, so
+  ## parallel=4 ran 4 chains on only 2 cores and PG wall-clock was ~2x inflated.
+  run_par <- (isTRUE(parallel) || (is.numeric(parallel) && parallel > 1)) &&
+             .Platform$OS.type != "windows"
+  if (run_par) {
+    req <- if (is.numeric(parallel)) parallel else getOption("mc.cores", 2L)
+    cores <- max(1L, min(n_chains, req))
     parallel::mclapply(seeds, runner, mc.cores = cores)
   } else {
     lapply(seeds, runner)

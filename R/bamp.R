@@ -612,11 +612,12 @@ if (verbose)
    hyper_pg <- list(age    = c(age_hyperpar_a,    age_hyperpar_b),
                     period = c(period_hyperpar_a, period_hyperpar_b),
                     cohort = c(cohort_hyperpar_a, cohort_hyperpar_b))
-   pg_par <- isTRUE(parallel) || (is.numeric(parallel) && parallel > 1)
    if (verbose) cat(paste0("Running Polya-Gamma Gibbs engine in ", chains, " chains.\n"))
+   ## pass the raw `parallel` (logical or numeric core count) so .bamp_pg can use
+   ## as many cores as the iwls path would (it caps internally at n_chains)
    pg <- .bamp_pg(Ymat, Nmat, ord_a, ord_p, ord_c, round(periods_per_agegroup),
                   hyper_pg, number_of_iterations, burn_in, step, chains,
-                  parallel = pg_par, prior_scale = prior_scale, verbose = verbose)
+                  parallel = parallel, prior_scale = prior_scale, verbose = verbose)
    sumkick <- chains
    mkmat <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(r[[field]])))
    mkvec <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r[[field]], ncol = 1))))
@@ -729,16 +730,19 @@ if(parallel)results_list<-parallel::mclapply(1:chains,singlerun,cases,population
  
  if (sum(kick)==0)
   {
-   cat("\nAutomatic check procedure removed all Markov chains. Please change your model settings (maybe add overdispersion).")
+   warning("Automatic check procedure removed all Markov chains. ",
+           "Please change your model settings (e.g. add overdispersion) or try method=\"pg\".",
+           call. = FALSE)
     return(list())
   }
  
 
  if (sum(kick)<chains)
  {
-   cat("\nAutomatic check procedure removed",sum(!kick),"Markov chain")
-   if (sum(!kick)>1)cat("s")
-   cat(". Please check for convergence using checkConvergence() and maybe change your model settings (maybe add overdispersion).\n")
+   warning("Automatic check procedure removed ", sum(!kick), " Markov chain",
+           if (sum(!kick) > 1) "s" else "",
+           ". Please check convergence with checkConvergence() and consider changing your ",
+           "model settings (e.g. add overdispersion) or method=\"pg\".", call. = FALSE)
  }
  
  ii=0
