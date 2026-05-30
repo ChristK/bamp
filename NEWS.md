@@ -1,4 +1,14 @@
 # bamp 2.2.0
+* New `selectModel()` automates the choice of model specification. It searches
+  over the random-walk order of each effect (`"rw1"` vs `"rw2"`), whether to
+  include overdispersion, and optionally heterogeneity, by greedy forward
+  selection on the Deviance Information Criterion (DIC), and returns a ranked
+  comparison table plus the refitted best model. Selection is convergence-gated
+  -- a model whose chains have not mixed cannot be chosen -- and uses a parsimony
+  margin so a more complex model is adopted only when it is clearly better. Axes
+  can be pinned to restrict the search (e.g. `age = "rw2"`). Fitting uses
+  `method = "pg"`. A `print` method shows the ranked table and the selected
+  specification.
 * The `prior_scale` argument is now documented in detail: a new
   "Scaling the random-walk priors" section in `?bamp` explains what the
   Sorbye-Rue unit-variance scaling does, why it makes the precision (smoothing)
