@@ -120,11 +120,16 @@ pruning: the sampler is parameter-free from the user's point of view.
 ### 2.4 Identifiability handling inside the sampler
 
 Each effect is constrained to sum to zero (a level constraint), imposed jointly
-in step 2. For RW2 in a *full* APC model the shared linear-trend (drift)
-direction is improper (the RW2 prior does not penalise it and the likelihood
-cannot separate it — see §7); the sampler pins it with a single zero-slope
-constraint on the period effect. This is an internal reporting convention; the
-fitted rates, the curvatures and the net drift are unaffected.
+in step 2. When the **period** effect is a second-order random walk in a *full*
+APC model (i.e. all three effects present and `period = "rw2"`), the shared
+linear-trend (drift) direction is improper — the RW2 prior does not penalise it
+and the likelihood cannot separate it (see §7) — so the sampler pins it with a
+single zero-slope constraint on the period effect. The pin is applied only in
+that case: a full model with an RW1 period (for example the headline
+`age = "rw2", period = "rw1", cohort = "rw1"`) gets no such constraint, because
+its RW1 period prior already (weakly) identifies the trend. This is an internal
+reporting convention; the fitted rates, the curvatures and the net drift are
+unaffected.
 
 ### 2.5 What the user sees
 
@@ -183,8 +188,8 @@ statistically meaningful tolerance — across every supported model
 (plain RW1/RW2, overdispersion, each heterogeneity effect, period and cohort
 covariates, and their combinations), end to end through `bamp()` on real data.
 
-**Speed.** Roughly 1.8× faster on the coronary/stroke series (P ≈ 180) and up to
-about 3.2× on the smaller "non-modelled deaths" series (P ≈ 124), measured as
+**Speed.** Roughly 1.8× faster on the coronary/stroke series (P = 148) and up to
+about 3.2× on the smaller "non-modelled deaths" series (P = 112), measured as
 full four-chain `bamp()` wall-clock at a fixed seed. The speedup grows as the
 model shrinks, because the dense Cholesky — the one cost the C code cannot beat,
 since R already runs it through LAPACK — is then a smaller fraction of the work.
@@ -314,11 +319,14 @@ fit every candidate that is exactly *one step more complex* than the current bes
 — an effect upgraded RW1 → RW2, overdispersion switched on, or (optionally)
 heterogeneity added to an effect — and adopt the lowest-DIC candidate, **but only
 if** it (a) converged and (b) improves the DIC by at least a parsimony margin
-(`dic_margin`, default 4, a conventional "clearly better" difference). Repeat
-until no admissible improvement remains. This costs a handful of fits rather than
-the full grid of ≈ 250 models, follows an interpretable path, and prefers the
-simpler model unless the data clearly favour more structure. Each distinct
-specification is fitted at most once.
+(`dic_margin`, default 4, a conventional "clearly better" difference). The
+parsimony margin in (b) applies once the current best model has itself converged;
+while the running best has *not* yet converged, the first converged candidate is
+adopted regardless of the margin (any converged model is preferable to an
+unconverged one). Repeat until no admissible improvement remains. This costs a
+handful of fits rather than the full grid of ≈ 250 models, follows an
+interpretable path, and prefers the simpler model unless the data clearly favour
+more structure. Each distinct specification is fitted at most once.
 
 **Two design decisions worth dwelling on.**
 
@@ -442,16 +450,19 @@ and quantiles are non-linear, the *summarised* median curve has only approximate
 
 * **`predict_apc(object, periods = 0)` crashed.** The retrospective,
   no-forecast case (used for model checking) errored, and with
-  `overdisp = TRUE` aborted with "NaNs produced". The cause was a classic R
-  sequence trap: the random-walk extrapolation helper looped over `(n1+1):n2`,
-  and when `periods = 0` the future horizon `n2` equals the observed `n1`, so
-  `(n1+1):n2` is `(n1+1):n1`, which in R counts *downwards* to `c(n1+1, n1)`
-  instead of being empty. This appended a spurious period (and cohort) step and
-  shifted every field in the packed per-draw parameter vector, so the per-cell
-  predictor read the wrong cohort effect and the overdispersion-precision slot
-  landed on a (frequently negative) effect, whence √(negative) = NaN. The three
-  loops are now guarded with `if (n2 > n1)`. The bug was pre-existing and
-  engine-independent (it reproduced on `method = "iwls"`); `periods ≥ 1` was
+  `overdisp = TRUE` aborted with "missing values and NaN's not allowed if
+  'na.rm' is FALSE" (preceded by many non-fatal "NaNs produced" warnings). The
+  cause was a classic R sequence trap: the random-walk extrapolation helper
+  looped over `(n1+1):n2`, and when `periods = 0` the future horizon `n2` equals
+  the observed `n1`, so `(n1+1):n2` is `(n1+1):n1`, which in R counts *downwards*
+  to `c(n1+1, n1)` instead of being empty. This appended a spurious period (and
+  cohort) step and shifted every field in the packed per-draw parameter vector,
+  so the per-cell predictor read the wrong cohort effect and the
+  overdispersion-precision slot landed on a (frequently negative) effect, whence
+  √(negative) only *warns* "NaNs produced" — the fatal abort came one step later,
+  when the downstream `quantile()` call met those NaNs. The three loops are now
+  guarded with `if (n2 > n1)`. The bug was pre-existing and engine-independent
+  (it reproduced on `method = "iwls"`); `periods ≥ 1` was
   unaffected.
 
 * **`plot()` failed for some quantile counts.** A single quantile errored with
