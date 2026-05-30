@@ -13,6 +13,9 @@
 #'   effects; \code{"none"} plots the raw, un-gauged effects. It is display-only
 #'   (the fitted rates and predictions are unchanged) and is ignored for models
 #'   that are not full APC. See \code{\link{effects.apc}}.
+#' @param combined logical. For heterogeneity models, if \code{TRUE} plot the
+#'   full effect (smooth + iid heterogeneity); default \code{FALSE} plots the
+#'   smooth component only. Ignored for models without heterogeneity.
 #' @param ... Additional arguments will be ignored
 #'
 #' @details Plot of age, period and cohort effects from apc objects. If covariates have been used for period/cohort, a second plot with covariate, absolute effect and relative effect is created. Absolute effect is relative effect times covariate.
@@ -26,10 +29,11 @@
 #' plot(model)
 #' }
 plot.apc<-function(x, quantiles=c(0.05,0.5,0.95),
-                   convention=c("age","period","cohort","none"), ...)
+                   convention=c("age","period","cohort","none"), combined=FALSE, ...)
 {
   convention <- match.arg(convention)
   g <- .apc_regauge(x, convention)
+  if (isTRUE(combined)) g <- .apc_add_het(x, g)  # add iid het to the smooth curve
   q<-length(quantiles)
   # summarise to a q x (n groups) matrix; force the matrix shape so a single
   # quantile (q==1) keeps a row dimension -- apply() would otherwise drop it to

@@ -8,6 +8,7 @@
   x,
   quantiles = c(0.05, 0.5, 0.95),
   convention = c("age", "period", "cohort", "none"),
+  combined = FALSE,
   ...
 )
 }
@@ -27,6 +28,10 @@ as curvature about a zero trend and puts the drift in the period and cohort
 effects; \code{"none"} plots the raw, un-gauged effects. It is display-only
 (the fitted rates and predictions are unchanged) and is ignored for models
 that are not full APC. See \code{\link{effects.apc}}.}
+
+\item{combined}{logical. For heterogeneity models, if \code{TRUE} plot the
+full effect (smooth + iid heterogeneity); default \code{FALSE} plots the
+smooth component only. Ignored for models without heterogeneity.}
 
 \item{...}{Additional arguments will be ignored}
 }

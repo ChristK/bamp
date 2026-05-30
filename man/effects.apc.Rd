@@ -10,6 +10,7 @@
   quantiles = 0.5,
   update = FALSE,
   convention = c("age", "period", "cohort", "none"),
+  combined = FALSE,
   ...
 )
 }
@@ -25,6 +26,11 @@
 \item{convention}{display-layer gauge convention for the linear trend (drift)
 in a full age-period-cohort model; one of \code{"age"} (default),
 \code{"period"}, \code{"cohort"} or \code{"none"}. See Details.}
+
+\item{combined}{logical. For heterogeneity models (\code{"rw1+het"} /
+\code{"rw2+het"}), if \code{TRUE} the returned effect is the full effect
+(smooth + iid heterogeneity component); if \code{FALSE} (default) only the
+smooth component is returned. Ignored for models without heterogeneity.}
 
 \item{...}{Additional arguments will be ignored}
 }

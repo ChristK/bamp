@@ -67,10 +67,19 @@
 .bamp_pg_chain <- function(Y, N, ord_a, ord_p, ord_c, ppa,
                            hyper, n_iter, burn_in, thin, seed,
                            prior_scale = TRUE, init = "empirical",
-                           overdisp = FALSE, z_hyper = c(1, 0.05)) {
+                           overdisp = FALSE, z_hyper = c(1, 0.05),
+                           het = c(FALSE, FALSE, FALSE)) {
   set.seed(seed)
   I <- nrow(Y); J <- ncol(Y); K <- ppa * (I - 1) + J
   has_a <- ord_a > 0; has_p <- ord_p > 0; has_c <- ord_c > 0
+  ## heterogeneity: an extra iid-Normal component on each effect, drawn JOINTLY
+  ## with the smooth effects in the one-block Gaussian draw (the het component
+  ## shares the effect index, so a separate block would confound badly). het can
+  ## only accompany a present effect.
+  het_a <- isTRUE(het[1]) && has_a; het_p <- isTRUE(het[2]) && has_p
+  het_c <- isTRUE(het[3]) && has_c
+  h2 <- function(x) if (is.null(x)) c(1, 1) else x
+  k2hp_a <- h2(hyper$age_het); k2hp_p <- h2(hyper$period_het); k2hp_c <- h2(hyper$cohort_het)
   cohidx <- outer(1:I, 1:J, function(i, j) (I - i) * ppa + j)   # cohort index per cell
   cohv <- as.integer(cohidx)
   ymh <- Y - N / 2
@@ -90,21 +99,29 @@
   if (has_p) sp <- setup(J, ord_p, hyper$period)
   if (has_c) sc <- setup(K, ord_c, hyper$cohort)
 
-  ## parameter index layout in the joint vector beta = (mu, theta, phi, psi)
+  ## parameter index layout in the joint vector
+  ## beta = (mu, theta, phi, psi, theta2, phi2, psi2)  [het blocks appended]
   ia <- 1L
   ith <- if (has_a) 1L + (1:I)         else integer(0)
   off <- 1L + (if (has_a) I else 0L)
   iph <- if (has_p) off + (1:J)        else integer(0)
   off <- off + (if (has_p) J else 0L)
   ips <- if (has_c) off + (1:K)        else integer(0)
-  P   <- 1L + (if (has_a) I else 0L) + (if (has_p) J else 0L) + (if (has_c) K else 0L)
+  off <- off + (if (has_c) K else 0L)
+  ith2 <- if (het_a) off + (1:I) else integer(0); off <- off + (if (het_a) I else 0L)
+  iph2 <- if (het_p) off + (1:J) else integer(0); off <- off + (if (het_p) J else 0L)
+  ips2 <- if (het_c) off + (1:K) else integer(0); off <- off + (if (het_c) K else 0L)
+  P   <- off
 
-  ## fixed constraint matrix A (sum-to-zero per effect; RW2 period zero-slope)
+  ## fixed constraint matrix A (sum-to-zero per effect, incl. het; RW2 period zero-slope)
   Arows <- list()
   mkrow <- function(idx, val) { r <- numeric(P); r[idx] <- val; r }
   if (has_a) Arows <- c(Arows, list(mkrow(ith, 1)))
   if (has_p) Arows <- c(Arows, list(mkrow(iph, 1)))
   if (has_c) Arows <- c(Arows, list(mkrow(ips, 1)))
+  if (het_a) Arows <- c(Arows, list(mkrow(ith2, 1)))
+  if (het_p) Arows <- c(Arows, list(mkrow(iph2, 1)))
+  if (het_c) Arows <- c(Arows, list(mkrow(ips2, 1)))
   ## RW2's second-difference prior does not penalise a linear trend, so in the
   ## full age-period-cohort model the shared drift direction is improper.  Pin
   ## it with a single zero-slope constraint on the period effect (a reporting
@@ -141,10 +158,25 @@
   has_od <- isTRUE(overdisp)
   zeta <- z_hyper[1] / z_hyper[2]
   delta_ij <- matrix(0, I, J)
+  ## het components (iid) + their precisions
+  theta2 <- numeric(I); phi2 <- numeric(J); psi2 <- numeric(K)
+  kappa2 <- lambda2 <- ny2 <- 1
 
   nkeep <- length(seq(burn_in + 1, n_iter, by = thin))
   out_theta <- matrix(0, nkeep, I); out_phi <- matrix(0, nkeep, J); out_psi <- matrix(0, nkeep, K)
   out_kap <- out_lam <- out_ny <- out_mu <- out_dev <- out_zeta <- numeric(nkeep)
+  out_theta2 <- matrix(0, nkeep, I); out_phi2 <- matrix(0, nkeep, J); out_psi2 <- matrix(0, nkeep, K)
+  out_kap2 <- out_lam2 <- out_ny2 <- numeric(nkeep)
+  ## het-only offset (theta2 row + phi2 col + psi2 cohort), I x J, or 0 if no het
+  any_het <- het_a || het_p || het_c
+  het_eta <- function() {
+    if (!any_het) return(0)
+    o <- matrix(0, I, J)
+    if (het_a) o <- o + theta2
+    if (het_p) o <- o + matrix(phi2, I, J, byrow = TRUE)
+    if (het_c) o <- o + matrix(psi2[cohidx], I, J)
+    o
+  }
   ksi_sum <- matrix(0, I, J); ksi_n <- 0L; keep <- 0L
 
   ## constant pieces of b
@@ -156,23 +188,36 @@
   ## assemble the joint precision X' diag(w) X + prior for a per-cell weight w
   ## (w = Polya-Gamma omega for the Gibbs draw, or the Fisher weight N p(1-p)
   ## for the Laplace-MH proposal). Returns the P x P precision matrix.
-  assemble_prec <- function(w, kap, lam, nyv) {
+  ## Smooth and het indices of the same effect share the likelihood coupling
+  ## (theta2_i enters cell (i,j) exactly like theta_i); they differ only in the
+  ## prior added to their diagonal block (GMRF K for smooth, iid I for het).
+  assemble_prec <- function(w, kap, lam, nyv, kap2 = 0, lam2 = 0, ny2v = 0) {
     Qm <- matrix(0, P, P); wv <- as.numeric(w)
     rs <- rowSums(w); cs <- colSums(w)
     TP <- PP <- NULL
     if (has_a && has_c) { TP <- matrix(0, I, K); TP[idxT] <- wv }
     if (has_p && has_c) { PP <- matrix(0, J, K); PP[idxP] <- wv }
+    csum <- if (!has_c) NULL else if (!is.null(TP)) colSums(TP) else if (!is.null(PP)) colSums(PP)
+            else { v <- numeric(K); ag <- rowsum(wv, cohv); v[as.integer(rownames(ag))] <- ag; v }
+    ag_g <- c(if (has_a) list(ith) else NULL, if (het_a) list(ith2) else NULL)
+    pg_g <- c(if (has_p) list(iph) else NULL, if (het_p) list(iph2) else NULL)
+    cg_g <- c(if (has_c) list(ips) else NULL, if (het_c) list(ips2) else NULL)
     Qm[ia, ia] <- sum(w)
-    if (has_a) { Qm[ia, ith] <- rs; Qm[ith, ia] <- rs; Qm[ith, ith] <- diag(rs, I) + kap * sa$K }
-    if (has_p) { Qm[ia, iph] <- cs; Qm[iph, ia] <- cs; Qm[iph, iph] <- diag(cs, J) + lam * sp$K }
-    if (has_c) {
-      csum <- if (!is.null(TP)) colSums(TP) else if (!is.null(PP)) colSums(PP)
-              else { v <- numeric(K); ag <- rowsum(wv, cohv); v[as.integer(rownames(ag))] <- ag; v }
-      Qm[ia, ips] <- csum; Qm[ips, ia] <- csum; Qm[ips, ips] <- diag(csum, K) + nyv * sc$K
-    }
-    if (has_a && has_p) { Qm[ith, iph] <- w; Qm[iph, ith] <- t(w) }
-    if (!is.null(TP)) { Qm[ith, ips] <- TP; Qm[ips, ith] <- t(TP) }
-    if (!is.null(PP)) { Qm[iph, ips] <- PP; Qm[ips, iph] <- t(PP) }
+    for (g in ag_g) { Qm[ia, g] <- rs;   Qm[g, ia] <- rs }
+    for (g in pg_g) { Qm[ia, g] <- cs;   Qm[g, ia] <- cs }
+    for (g in cg_g) { Qm[ia, g] <- csum; Qm[g, ia] <- csum }
+    for (g1 in ag_g) for (g2 in ag_g) Qm[g1, g2] <- diag(rs, I)
+    for (g1 in pg_g) for (g2 in pg_g) Qm[g1, g2] <- diag(cs, J)
+    for (g1 in cg_g) for (g2 in cg_g) Qm[g1, g2] <- diag(csum, K)
+    for (g1 in ag_g) for (g2 in pg_g) { Qm[g1, g2] <- w;  Qm[g2, g1] <- t(w) }
+    if (!is.null(TP)) for (g1 in ag_g) for (g2 in cg_g) { Qm[g1, g2] <- TP; Qm[g2, g1] <- t(TP) }
+    if (!is.null(PP)) for (g1 in pg_g) for (g2 in cg_g) { Qm[g1, g2] <- PP; Qm[g2, g1] <- t(PP) }
+    if (has_a) Qm[ith, ith] <- Qm[ith, ith] + kap  * sa$K
+    if (has_p) Qm[iph, iph] <- Qm[iph, iph] + lam  * sp$K
+    if (has_c) Qm[ips, ips] <- Qm[ips, ips] + nyv  * sc$K
+    if (het_a) Qm[ith2, ith2] <- Qm[ith2, ith2] + kap2 * diag(I)
+    if (het_p) Qm[iph2, iph2] <- Qm[iph2, iph2] + lam2 * diag(J)
+    if (het_c) Qm[ips2, ips2] <- Qm[ips2, ips2] + ny2v * diag(K)
     Qm
   }
   ## numerically stable log(1 + exp(e))
@@ -182,7 +227,7 @@
 
   for (it in 1:n_iter) {
     eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
-           (if (has_od) delta_ij else 0)
+           het_eta() + (if (has_od) delta_ij else 0)
     omega <- matrix(.pg_rpg(as.numeric(N), as.numeric(eta)), I, J)
 
     ## ---- Polya-Gamma joint Gibbs draw of (mu, theta, phi, psi) ----
@@ -208,7 +253,11 @@
       if (has_p) b[iph] <- b_ph0
       if (has_c) b[ips] <- b_ps0
     }
-    Q <- assemble_prec(wgt, kappa, lambda, ny)
+    ## het components share the smooth likelihood design -> same b entries
+    if (het_a) b[ith2] <- b[ith]
+    if (het_p) b[iph2] <- b[iph]
+    if (het_c) b[ips2] <- b[ips]
+    Q <- assemble_prec(wgt, kappa, lambda, ny, kappa2, lambda2, ny2)
     ## ridge to make the (intrinsically rank-deficient) Q numerically PD; the
     ## constraints remove the corresponding null directions
     diag(Q) <- diag(Q) + 1e-6 * mean(diag(Q))
@@ -217,10 +266,13 @@
     if (has_a) theta <- beta[ith]
     if (has_p) phi   <- beta[iph]
     if (has_c) psi   <- beta[ips]
+    if (het_a) theta2 <- beta[ith2]
+    if (het_p) phi2   <- beta[iph2]
+    if (het_c) psi2   <- beta[ips2]
 
     ## ---- overdispersion: cell effect delta_ij | rest ~ N, precision zeta | delta ~ Gamma
     if (has_od) {
-      eta0 <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J)   # smooth predictor
+      eta0 <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) + het_eta()  # smooth + het, no delta
       precd <- omega + zeta
       mden <- (ymh - omega * eta0) / precd                             # = omega*(z - eta0)/precd
       delta_ij <- matrix(mden + rnorm(I * J) / sqrt(precd), I, J)
@@ -231,13 +283,17 @@
     if (has_a) kappa  <- rgamma(1, sa$a + sa$rank / 2, sa$b + 0.5 * as.numeric(theta %*% sa$K %*% theta))
     if (has_p) lambda <- rgamma(1, sp$a + sp$rank / 2, sp$b + 0.5 * as.numeric(phi   %*% sp$K %*% phi))
     if (has_c) ny     <- rgamma(1, sc$a + sc$rank / 2, sc$b + 0.5 * as.numeric(psi   %*% sc$K %*% psi))
+    ## het precisions: iid Gaussian, rank (L-1) after the sum-to-zero constraint
+    if (het_a) kappa2  <- rgamma(1, k2hp_a[1] + 0.5 * (I - 1), k2hp_a[2] + 0.5 * sum(theta2^2))
+    if (het_p) lambda2 <- rgamma(1, k2hp_p[1] + 0.5 * (J - 1), k2hp_p[2] + 0.5 * sum(phi2^2))
+    if (het_c) ny2     <- rgamma(1, k2hp_c[1] + 0.5 * (K - 1), k2hp_c[2] + 0.5 * sum(psi2^2))
 
     ## ---- ASIS interweaving: non-centred (ancillary) re-draw of each precision
     ## (Yu & Meng 2011).  Rescaling the effect and its precision together breaks
     ## the precision-effect coupling that otherwise slows mixing, especially for
     ## the smoothing of weakly-informed cells in highly informative data. -------
     eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
-           (if (has_od) delta_ij else 0)
+           het_eta() + (if (has_od) delta_ij else 0)
     zwork <- ymh / omega
     nc_step <- function(x, prec, a, b, make_deta) {
       xt <- sqrt(prec) * x
@@ -261,31 +317,42 @@
     ## coordinates gamma (beta = Z gamma), so it mixes those cells properly.
     state <- function(bv) {
       mu_ <- bv[ia]
-      th_ <- if (has_a) bv[ith] else 0; ph_ <- if (has_p) bv[iph] else 0
       ps_ <- if (has_c) bv[ips] else NULL
       e <- mu_ + (if (has_a) matrix(bv[ith], I, J) else 0) +
                  (if (has_p) matrix(bv[iph], I, J, byrow = TRUE) else 0) +
                  (if (has_c) matrix(ps_[cohidx], I, J) else 0) +
+                 (if (het_a) matrix(bv[ith2], I, J) else 0) +
+                 (if (het_p) matrix(bv[iph2], I, J, byrow = TRUE) else 0) +
+                 (if (het_c) matrix(bv[ips2][cohidx], I, J) else 0) +
                  (if (has_od) delta_ij else 0)          # cell effect is a fixed offset here
       pp <- plogis(e); Wt <- N * pp * (1 - pp); ymnp <- Y - N * pp
+      rsy <- rowSums(ymnp); csy <- colSums(ymnp)
+      cgy <- if (has_c || het_c) { cg <- numeric(K); ag <- rowsum(as.numeric(ymnp), cohv)
+                                   cg[as.integer(rownames(ag))] <- ag; cg } else NULL
       g <- numeric(P); g[ia] <- sum(ymnp)
-      if (has_a) g[ith] <- rowSums(ymnp) - kappa  * as.numeric(sa$K %*% bv[ith])
-      if (has_p) g[iph] <- colSums(ymnp) - lambda * as.numeric(sp$K %*% bv[iph])
-      if (has_c) { cg <- numeric(K); ag <- rowsum(as.numeric(ymnp), cohv)
-                   cg[as.integer(rownames(ag))] <- ag
-                   g[ips] <- cg - ny * as.numeric(sc$K %*% ps_) }
-      H <- assemble_prec(Wt, kappa, lambda, ny); diag(H) <- diag(H) + 1e-6 * mean(diag(H))
+      if (has_a) g[ith] <- rsy - kappa  * as.numeric(sa$K %*% bv[ith])
+      if (has_p) g[iph] <- csy - lambda * as.numeric(sp$K %*% bv[iph])
+      if (has_c) g[ips] <- cgy - ny     * as.numeric(sc$K %*% ps_)
+      if (het_a) g[ith2] <- rsy - kappa2  * bv[ith2]     # iid prior gradient
+      if (het_p) g[iph2] <- csy - lambda2 * bv[iph2]
+      if (het_c) g[ips2] <- cgy - ny2     * bv[ips2]
+      H <- assemble_prec(Wt, kappa, lambda, ny, kappa2, lambda2, ny2)
+      diag(H) <- diag(H) + 1e-6 * mean(diag(H))
       Hg <- crossprod(Zbasis, H %*% Zbasis); gg <- as.numeric(crossprod(Zbasis, g))
       R <- chol(Hg)
       mean_g <- as.numeric(crossprod(Zbasis, bv)) + backsolve(R, forwardsolve(t(R), gg))
       lp <- sum(Y * e - N * softplus(e)) -
             0.5 * ((if (has_a) kappa  * as.numeric(bv[ith] %*% sa$K %*% bv[ith]) else 0) +
                    (if (has_p) lambda * as.numeric(bv[iph] %*% sp$K %*% bv[iph]) else 0) +
-                   (if (has_c) ny     * as.numeric(ps_     %*% sc$K %*% ps_)     else 0))
+                   (if (has_c) ny     * as.numeric(ps_     %*% sc$K %*% ps_)     else 0) +
+                   (if (het_a) kappa2  * sum(bv[ith2]^2) else 0) +
+                   (if (het_p) lambda2 * sum(bv[iph2]^2) else 0) +
+                   (if (het_c) ny2     * sum(bv[ips2]^2) else 0))
       list(R = R, mean_g = mean_g, lp = lp, gamma = as.numeric(crossprod(Zbasis, bv)))
     }
     bcur <- numeric(P); bcur[ia] <- mu
     if (has_a) bcur[ith] <- theta; if (has_p) bcur[iph] <- phi; if (has_c) bcur[ips] <- psi
+    if (het_a) bcur[ith2] <- theta2; if (het_p) bcur[iph2] <- phi2; if (het_c) bcur[ips2] <- psi2
     cur <- state(bcur)
     gstar <- cur$mean_g + backsolve(cur$R, rnorm(length(cur$mean_g)))
     bstar <- as.numeric(Zbasis %*% gstar)
@@ -297,6 +364,7 @@
       acc_mh <- acc_mh + 1L
       mu <- bstar[ia]
       if (has_a) theta <- bstar[ith]; if (has_p) phi <- bstar[iph]; if (has_c) psi <- bstar[ips]
+      if (het_a) theta2 <- bstar[ith2]; if (het_p) phi2 <- bstar[iph2]; if (het_c) psi2 <- bstar[ips2]
     }
 
     if (it > burn_in && ((it - burn_in) %% thin == 0)) {
@@ -304,8 +372,10 @@
       out_theta[keep, ] <- theta; out_phi[keep, ] <- phi; out_psi[keep, ] <- psi
       out_kap[keep] <- kappa; out_lam[keep] <- lambda; out_ny[keep] <- ny; out_mu[keep] <- mu
       out_zeta[keep] <- zeta
+      out_theta2[keep, ] <- theta2; out_phi2[keep, ] <- phi2; out_psi2[keep, ] <- psi2
+      out_kap2[keep] <- kappa2; out_lam2[keep] <- lambda2; out_ny2[keep] <- ny2
       eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
-             (if (has_od) delta_ij else 0)
+             het_eta() + (if (has_od) delta_ij else 0)
       ksi_sum <- ksi_sum + eta; ksi_n <- ksi_n + 1L
       pr <- 1 / (1 + exp(-eta)); yhat <- N * pr
       d1 <- 2 * ((N - Y) * log((N - Y) / (N - yhat)))
@@ -317,6 +387,12 @@
   list(theta = out_theta, phi = out_phi, psi = out_psi,
        kappa = out_kap, lambda = out_lam, ny = out_ny, my = out_mu,
        zeta = if (has_od) out_zeta else NULL,
+       theta2 = if (het_a) out_theta2 else NULL,
+       phi2   = if (het_p) out_phi2   else NULL,
+       psi2   = if (het_c) out_psi2   else NULL,
+       kappa2 = if (het_a) out_kap2 else NULL,
+       lambda2 = if (het_p) out_lam2 else NULL,
+       ny2 = if (het_c) out_ny2 else NULL,
        deviance = out_dev, ksi = ksi_sum / ksi_n,
        mh_accept = if (n_mh > 0) acc_mh / n_mh else NA_real_)
 }
@@ -325,11 +401,12 @@
 .bamp_pg <- function(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
                      n_iter, burn_in, thin, n_chains, parallel = FALSE,
                      prior_scale = TRUE, verbose = FALSE,
-                     overdisp = FALSE, z_hyper = c(1, 0.05)) {
+                     overdisp = FALSE, z_hyper = c(1, 0.05),
+                     het = c(FALSE, FALSE, FALSE)) {
   seeds <- sample.int(.Machine$integer.max, n_chains)
   runner <- function(s) .bamp_pg_chain(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
                                        n_iter, burn_in, thin, s, prior_scale,
-                                       overdisp = overdisp, z_hyper = z_hyper)
+                                       overdisp = overdisp, z_hyper = z_hyper, het = het)
   ## Honour a numeric `parallel` as the requested number of cores (matching the
   ## iwls path, where cores <- parallel); a bare TRUE means getOption('mc.cores').
   ## Capped at the number of chains. Previously cores were hard-capped at 2, so

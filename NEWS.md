@@ -1,4 +1,15 @@
 # bamp 2.2.0
+* The `method = "pg"` engine now supports heterogeneity models (`"rw1+het"`,
+  `"rw2+het"`) natively instead of falling back to `method = "iwls"`. The iid
+  heterogeneity component of each effect is drawn jointly with the intercept and
+  the smooth age/period/cohort effects in the one-block Gaussian step (a separate
+  block would mix badly because the smooth and heterogeneity components share the
+  same index). On data simulated from a known heterogeneity precision the engine
+  recovers it (the posterior covers the truth) and converges (Gelman-R ~1.00);
+  it agrees with the iwls engine on the combined effect curve and the DIC. By
+  default `effects()` and `plot()` still show the smooth component only (as
+  before); the new `combined = TRUE` argument returns the full effect (smooth +
+  heterogeneity). Covariate models still fall back to `method = "iwls"`.
 * The `method = "pg"` engine now supports overdispersion (`overdisp = TRUE`)
   natively instead of falling back to `method = "iwls"`. The cell-level random
   effect is marginalised out of the joint draw of the intercept and the age,

@@ -75,13 +75,12 @@ function(cases, population,
   output=apc()
   method <- match.arg(method)
 
-  ## The Polya-Gamma Gibbs engine supports plain RW1/RW2 priors and
-  ## overdispersion; it falls back to IWLS for heterogeneity and covariates.
+  ## The Polya-Gamma Gibbs engine supports plain RW1/RW2 priors, overdispersion
+  ## and heterogeneity; it falls back to IWLS for covariate models.
   if (method == "pg") {
-    uses_het <- any(grepl("het", c(age, period, cohort)))
-    if (uses_het || !is.null(period_covariate) || !is.null(cohort_covariate)) {
-      warning("method='pg' does not yet support heterogeneity or covariates; ",
-              "using method='iwls'.", call. = FALSE)
+    if (!is.null(period_covariate) || !is.null(cohort_covariate)) {
+      warning("method='pg' does not yet support covariates; using method='iwls'.",
+              call. = FALSE)
       method <- "iwls"
     }
   }
@@ -608,25 +607,37 @@ if (verbose)
    ord_a <- ord_of(age_block); ord_p <- ord_of(period_block); ord_c <- ord_of(cohort_block)
    Ymat <- matrix(as.integer(cases),      number_of_agegroups, number_of_periods)
    Nmat <- matrix(as.integer(population),  number_of_agegroups, number_of_periods)
+   het_pg <- c(age_block %in% c(3, 4), period_block %in% c(3, 4), cohort_block %in% c(3, 4))
    hyper_pg <- list(age    = c(age_hyperpar_a,    age_hyperpar_b),
                     period = c(period_hyperpar_a, period_hyperpar_b),
-                    cohort = c(cohort_hyperpar_a, cohort_hyperpar_b))
+                    cohort = c(cohort_hyperpar_a, cohort_hyperpar_b),
+                    age_het    = c(age_hyperpar_a2,    age_hyperpar_b2),
+                    period_het = c(period_hyperpar_a2, period_hyperpar_b2),
+                    cohort_het = c(cohort_hyperpar_a2, cohort_hyperpar_b2))
    if (verbose) cat(paste0("Running Polya-Gamma Gibbs engine in ", chains, " chains.\n"))
    ## pass the raw `parallel` (logical or numeric core count) so .bamp_pg can use
    ## as many cores as the iwls path would (it caps internally at n_chains)
    pg <- .bamp_pg(Ymat, Nmat, ord_a, ord_p, ord_c, round(periods_per_agegroup),
                   hyper_pg, number_of_iterations, burn_in, step, chains,
                   parallel = parallel, prior_scale = prior_scale, verbose = verbose,
-                  overdisp = (z_mode == 1), z_hyper = c(z_hyperpar_a, z_hyperpar_b))
+                  overdisp = (z_mode == 1), z_hyper = c(z_hyperpar_a, z_hyperpar_b),
+                  het = het_pg)
    sumkick <- chains
    mkmat <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(r[[field]])))
    mkvec <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r[[field]], ncol = 1))))
    theta <- mkmat("theta"); phi <- mkmat("phi"); psi <- mkmat("psi")
    my <- mkvec("my"); kappa <- mkvec("kappa"); lambda <- mkvec("lambda")
    ny <- mkvec("ny"); deviance <- mkvec("deviance")
-   ## het components are not used by the pg model (zero-filled for object compat)
-   theta2 <- phi2 <- psi2 <- kappa2 <- lambda2 <- ny2 <-
-     coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(0, nrow = length(r$my), ncol = 1))))
+   ## het components: populate from the pg fit when present, else zero-fill for
+   ## object compatibility. (The shared samples assembly stores age2/etc. only for
+   ## block==3, matching the iwls output contract.)
+   zerofill <- coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(0, nrow = length(r$my), ncol = 1))))
+   theta2  <- if (het_pg[1]) mkmat("theta2") else zerofill
+   phi2    <- if (het_pg[2]) mkmat("phi2")   else zerofill
+   psi2    <- if (het_pg[3]) mkmat("psi2")   else zerofill
+   kappa2  <- if (het_pg[1]) mkvec("kappa2") else zerofill
+   lambda2 <- if (het_pg[2]) mkvec("lambda2") else zerofill
+   ny2     <- if (het_pg[3]) mkvec("ny2")    else zerofill
    ## overdispersion precision (zeta); stored as samples$overdispersion when z_mode==1
    delta <- if (z_mode == 1)
      coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r$zeta, ncol = 1))))

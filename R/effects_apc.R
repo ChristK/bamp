@@ -7,6 +7,10 @@
 #' @param convention display-layer gauge convention for the linear trend (drift)
 #'   in a full age-period-cohort model; one of \code{"age"} (default),
 #'   \code{"period"}, \code{"cohort"} or \code{"none"}. See Details.
+#' @param combined logical. For heterogeneity models (\code{"rw1+het"} /
+#'   \code{"rw2+het"}), if \code{TRUE} the returned effect is the full effect
+#'   (smooth + iid heterogeneity component); if \code{FALSE} (default) only the
+#'   smooth component is returned. Ignored for models without heterogeneity.
 #' @param ... Additional arguments will be ignored
 #'
 #' @details
@@ -50,17 +54,21 @@
 #' effects(model)
 #' }
 effects.apc<-function(object, mean=FALSE, quantiles=0.5, update=FALSE,
-                      convention=c("age","period","cohort","none"), ...)
+                      convention=c("age","period","cohort","none"), combined=FALSE, ...)
 {
   convention <- match.arg(convention)
   x<-object
-  key <- list(mean=mean, quantiles=quantiles, convention=convention)
+  key <- list(mean=mean, quantiles=quantiles, convention=convention, combined=combined)
   # reuse a cached result only if it was computed with the same settings;
   # recompute otherwise. Either way the return must honour `update` below.
   if (!is.null(x$effects) && identical(attr(x$effects,"settings"), key)) {
     effects <- x$effects
   } else {
     g <- .apc_regauge(object, convention)
+    # combined=TRUE: add the iid heterogeneity component (age2/period2/cohort2)
+    # to the smooth curve. The het part is sum-to-zero and not involved in the
+    # trend gauge, so it adds directly. No-op for models without het.
+    if (isTRUE(combined)) g <- .apc_add_het(object, g)
 
     summ <- function(s) {
       z <- summary(s, quantiles=quantiles)
@@ -76,6 +84,23 @@ effects.apc<-function(object, mean=FALSE, quantiles=0.5, update=FALSE,
   }
   if (update){x$effects<-effects; return(x)}
   return(effects)
+}
+
+## Internal: add the iid heterogeneity component to each smooth effect, per draw
+## per chain. The het slots (age2/period2/cohort2) exist only for "+het" models;
+## where absent the smooth effect is returned unchanged. The het part is already
+## sum-to-zero and gauge-independent, so it adds directly to the (re-gauged)
+## smooth curve to give the full effect.
+.apc_add_het <- function(object, g) {
+  addh <- function(sm, het) {
+    if (is.null(sm) || is.null(het)) return(sm)
+    coda::as.mcmc.list(mapply(function(a, h) coda::mcmc(as.matrix(a) + as.matrix(h)),
+                              sm, het, SIMPLIFY = FALSE))
+  }
+  g$age    <- addh(g$age,    object$samples[["age2"]])
+  g$period <- addh(g$period, object$samples[["period2"]])
+  g$cohort <- addh(g$cohort, object$samples[["cohort2"]])
+  g
 }
 
 ## Internal: re-gauge the age/period/cohort effect samples to a fixed display
