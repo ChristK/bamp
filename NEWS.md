@@ -1,4 +1,13 @@
 # bamp 2.2.0
+* `predict_apc(object, periods = 0)` (the retrospective, no-forecast case used for
+  model checking) no longer errors. The random-walk extrapolation helper looped
+  over `(n1+1):n2`, which counts *downward* when `n2 == n1` (i.e. `periods = 0`),
+  appending a spurious extra period/cohort step; that shifted the packed parameter
+  vector so the per-cell predictor read the wrong cohort effect, and with
+  `overdisp = TRUE` it took the square root of a (negative) effect in place of the
+  overdispersion precision, aborting with "NaNs produced". The loops are now
+  guarded with `n2 > n1`. Affects both engines (`"iwls"` and `"pg"`); `periods >= 1`
+  was unaffected.
 * The `method = "pg"` engine now supports period and cohort covariates
   (`period_covariate` / `cohort_covariate`) natively, completing its model
   coverage -- it now handles the full `bamp` model space with no fallback to
