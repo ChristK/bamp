@@ -35,10 +35,12 @@
 #' @param prior_scale logical; only used by \code{method="pg"}. If \code{TRUE},
 #' the intrinsic random-walk structure matrices are scaled to unit generalised
 #' variance (Sorbye & Rue 2014) so that a single hyper-prior is comparable
-#' across data sets of different size and grid. The default is \code{FALSE},
-#' which keeps the same prior parameterisation (and the same default
-#' hyper-parameters) as \code{method="iwls"}; if you set it to \code{TRUE} you
-#' should choose hyper-parameters appropriate for the scaled prior.
+#' across random-walk orders, grid sizes and data sets. The default is
+#' \code{FALSE}, which keeps the same prior parameterisation (and the same
+#' default hyper-parameters) as \code{method="iwls"}; if you set it to
+#' \code{TRUE} you should choose hyper-parameters appropriate for the scaled
+#' prior. See \sQuote{Scaling the random-walk priors} below for the rationale
+#' and benefits, and the examples for a short demonstration.
 #' @param pg_engine implementation of the \code{method="pg"} sampler, one of
 #' \code{"C"} (default) or \code{"R"}. Both run the identical algorithm and,
 #' for a given seed, produce the same draws to floating-point tolerance; the
@@ -60,18 +62,89 @@
 #' \item models with additional age, period and/or cohort heterogeneity,
 #' \item additional covariates.}
 #' 
-#' @details This functions returns an \code{\link{apc}} object. 
+#' @details This functions returns an \code{\link{apc}} object.
 #' Only samples from the posterior are computed, point estimates and credible intervals will be computed in \code{\link{effects.apc}}, \code{\link{print.apc}} and \code{\link{plot.apc}}.
 #' \code{\link{predict_apc}} can be used for for prediction of the future rates and number of cases and for a retrospective prediction for model checking.
+#'
+#' @section Scaling the random-walk priors (\code{prior_scale}):
+#' Each age, period and cohort effect has an intrinsic Gaussian (random-walk)
+#' prior with precision (smoothing) parameter \eqn{\kappa}: the effect vector
+#' \eqn{x} has density proportional to \eqn{\exp(-\tfrac{1}{2}\kappa\, x'Kx)},
+#' where \eqn{K=D'D} is built from the first- or second-order difference
+#' operator \eqn{D}. A \eqn{\mathrm{Gamma}(a,b)} hyper-prior is placed on
+#' \eqn{\kappa}. The difficulty is that the smoothness implied by a given
+#' \eqn{\kappa} is governed not by \eqn{\kappa} alone but by the marginal
+#' variance of the effect, the generalised inverse of \eqn{\kappa K}; and the
+#' eigenvalues of \eqn{K} grow with the number of time points and with the
+#' random-walk order. The \emph{same} hyper-prior on \eqn{\kappa} therefore
+#' implies very different prior smoothness for, say, an RW1 over 10 periods and
+#' an RW2 over 50 cohorts. A hyper-prior tuned on one model silently means
+#' something different on another, which is one reason a fixed default can
+#' behave inconsistently across data sets.
+#'
+#' With \code{prior_scale = TRUE} the structure matrix \eqn{K} is rescaled so
+#' that the geometric mean of the (generalised) marginal variances equals one
+#' (Sorbye and Rue, 2014, DOI:10.1080/01621459.2013.866549). After scaling,
+#' \eqn{1/\sqrt{\kappa}} is, to a good approximation, the marginal standard
+#' deviation of a typical effect element \emph{on the log-odds (logit) scale},
+#' independently of the random-walk order, the number of age/period/cohort
+#' points and the grid spacing.
+#'
+#' Benefits: (i) \strong{portable hyper-priors} -- one \eqn{\mathrm{Gamma}(a,b)}
+#' encodes the same smoothness belief across RW1/RW2 and across data sets of
+#' different size; (ii) an \strong{interpretable prior} -- you can set
+#' \eqn{(a,b)} to express a belief about \eqn{1/\sqrt{\kappa}} as a prior effect
+#' standard deviation on the logit scale; (iii) \strong{fairer model comparison}
+#' (e.g. RW1 vs RW2 by DIC), because the prior is not implicitly penalising one
+#' model far more than another. Scaling affects only the smooth random-walk
+#' blocks; the i.i.d. heterogeneity components and overdispersion already have
+#' an interpretable scale and are unchanged.
+#'
+#' The default is \code{prior_scale = FALSE} so that \code{method = "pg"}
+#' reproduces the prior parameterisation (and default \code{hyperpar}) of the
+#' legacy \code{method = "iwls"} engine. If you turn scaling on you should set
+#' \code{hyperpar} for the scaled prior, where \eqn{\kappa \approx
+#' 1/\mathrm{variance}}; using the unscaled defaults with \code{prior_scale =
+#' TRUE} would impose a different (and probably unintended) amount of smoothing.
+#' Scaling is most worthwhile when fitting many models or data sets and you want
+#' one coherent, interpretable prior across all of them. The example below shows
+#' the effect concretely.
+#'
 #' @seealso \code{vignette("modeling", package = "bamp")}
 #' @useDynLib bamp
 #' @export
 #' @import coda
-#' @examples 
+#' @examples
 #' \dontrun{
 #' data(apc)
 #' model <- bamp(cases, population, age="rw1", period="rw1", cohort="rw1", periods_per_agegroup = 5)
 #' }
+#'
+#' ## Demonstration of prior_scale (no MCMC, runs instantly): for a fixed
+#' ## precision kappa, report the geometric-mean prior marginal standard
+#' ## deviation of a random-walk effect on the logit scale, with and without
+#' ## Sorbye-Rue scaling, across random-walk orders and grid sizes.
+#' prior_sd <- function(L, order, kappa = 1, scale = FALSE) {
+#'   K <- crossprod(diff(diag(L), differences = order))   # structure matrix D'D
+#'   if (scale) {                                          # Sorbye-Rue unit-variance scaling
+#'     e <- eigen(K, symmetric = TRUE); keep <- e$values > max(e$values) * 1e-9
+#'     V <- e$vectors[, keep, drop = FALSE]
+#'     Sigma <- V %*% diag(1 / e$values[keep], sum(keep)) %*% t(V)
+#'     K <- K * exp(mean(log(diag(Sigma))))
+#'   }
+#'   e <- eigen(K, symmetric = TRUE); keep <- e$values > max(e$values) * 1e-9
+#'   V <- e$vectors[, keep, drop = FALSE]
+#'   Sig <- V %*% diag(1 / e$values[keep], sum(keep)) %*% t(V) / kappa
+#'   sqrt(exp(mean(log(diag(Sig)))))                       # geometric-mean marginal SD
+#' }
+#' grid <- expand.grid(order = 1:2, L = c(10, 25, 50))
+#' data.frame(grid,
+#'            unscaled = round(mapply(prior_sd, grid$L, grid$order, scale = FALSE), 3),
+#'            scaled   = round(mapply(prior_sd, grid$L, grid$order, scale = TRUE), 3))
+#' ## With prior_scale = FALSE the same kappa = 1 implies an effect SD ranging
+#' ## from ~1.2 to ~14.6 across these models; with prior_scale = TRUE it is 1.0
+#' ## throughout, so a single hyper-prior on kappa means the same smoothness for
+#' ## every random-walk order and grid size.
 bamp <-
 function(cases, population,
         age, period, cohort, overdisp=FALSE,

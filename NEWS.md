@@ -1,4 +1,12 @@
 # bamp 2.2.0
+* The `prior_scale` argument is now documented in detail: a new
+  "Scaling the random-walk priors" section in `?bamp` explains what the
+  Sorbye-Rue unit-variance scaling does, why it makes the precision (smoothing)
+  hyper-prior portable and interpretable across random-walk orders and grid
+  sizes, when to use it, and the trade-off with the default hyper-parameters. A
+  short, instantly-running example shows that for a fixed precision the implied
+  prior effect standard deviation ranges from ~1.2 to ~14.6 across RW orders and
+  grid sizes without scaling, but is 1.0 throughout with scaling.
 * The MCMC length is now chosen automatically from the data by default. Each of
   `number_of_iterations`, `burn_in` and `step` in `mcmc.options` may be a number
   or the string `"auto"` (the new default). With `"auto"`, rare or zero-heavy
