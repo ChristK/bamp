@@ -4,3 +4,4 @@
 ^CHANGES-2\.2\.0\.md$
 ^.*\.Rcheck$
 ^.*\.tar\.gz$
+^MD5$
