@@ -16,7 +16,7 @@ Additionally to the model described in [Knorr-Held and Rainer (2001)](https://do
 - AP and AC models
 - models with and without global heterogenity parameter (overdispersion)
 - models with additional age, period and/or cohort heterogenity
-- including covariates (still in development)
+- including covariates
 Detail about this feature can be found in [Schmid (2004 - in German)](https://edoc.ub.uni-muenchen.de/3000/)
 
 There are some graphical routines available in order to

@@ -1,0 +1,18 @@
+# Local validation data (not part of the package)
+data_to_validate/
+
+# graphify knowledge-graph output (generated, not part of the package)
+graphify-out/
+
+# Compiled objects / shared libraries
+src/*.o
+src/*.so
+src/*.dll
+
+# R CMD build / check artefacts
+*.Rcheck/
+*.tar.gz
+
+# Editor / tooling
+.serena/
+.claude/
