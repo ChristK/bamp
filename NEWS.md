@@ -1,4 +1,14 @@
 # bamp 2.2.0
+* The MCMC length is now chosen automatically from the data by default. Each of
+  `number_of_iterations`, `burn_in` and `step` in `mcmc.options` may be a number
+  or the string `"auto"` (the new default). With `"auto"`, rare or zero-heavy
+  data -- whose rare-event cells mix more slowly -- is given more iterations
+  (from 40000 for well-populated data up to 120000 when almost every cell is
+  empty or has very few events), `burn_in` is set to half the iterations, and
+  `step` is set to keep about 1000 stored samples per chain. The rarity score is
+  the fraction of zero cells (or half the fraction of cells with <= 5 events,
+  whichever is larger). Any element supplied as a number is used exactly as
+  given, so passing an explicit `mcmc.options` reproduces the previous behaviour.
 * **`method = "pg"` is now the default sampler** (previously `"iwls"`). The
   Polya-Gamma sampler is feature-complete (RW1/RW2, heterogeneity, overdispersion,
   period/cohort covariates), markedly more robust on the sparse, zero-cell,

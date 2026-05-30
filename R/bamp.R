@@ -9,7 +9,7 @@
 #' @param periods_per_agegroup periods per age group
 #' @param period_covariate covariate for period
 #' @param cohort_covariate covariate for cohort
-#' @param mcmc.options list of options for MCMC. \itemize{\item number_of_iterations: number of iterations per chain. \item burn_in: number of iterations used as burnin at the beginning of the algorithm, these iterations will be removed. \item step: Step size, for example default is 50, so only every 50th iterations will be stored. \item tuning: number of iterations for automatic tuning. Depending on the model, the MCMC algorithm will tune certain parameters for more efficient MCMC chains. After tuning, the algorithm is restarted.} 
+#' @param mcmc.options list of options for MCMC. \itemize{\item number_of_iterations: number of iterations per chain. \item burn_in: number of iterations used as burnin at the beginning of the algorithm, these iterations will be removed. \item step: Step size, so only every step-th iteration is stored. \item tuning: number of iterations for automatic tuning (used by \code{method="iwls"}). Depending on the model, the MCMC algorithm will tune certain parameters for more efficient MCMC chains. After tuning, the algorithm is restarted.} Each of \code{number_of_iterations}, \code{burn_in} and \code{step} may be a number or the string \code{"auto"} (the default). \code{"auto"} chooses the value from the data: rare or zero-heavy counts (whose rare-event cells mix more slowly) get more iterations (from 40000 for well-populated data up to 120000 when almost every cell is empty or has very few events), \code{burn_in} defaults to half the iterations, and \code{step} is set to keep about 1000 stored samples per chain. Any value given as a number is used exactly as supplied, so explicit settings reproduce the previous behaviour.
 #' @param hyperpar list of hyper parameters. The hyper prior for the precision (inverse variance) in the random walk priors is a Gamma distribution with parameters \eqn{a} and \eqn{b}; expected value is \eqn{a/b}, variance is \eqn{a/b^2}. Weak hyper parameters are suggested, defaults are \eqn{a=1, b=0.5} for age, \eqn{a=1, b=0.0005} for period and cohort effects and \eqn{a=1, b=0.05} for overdispersion (if added). It is recommended to choose the hyper priors depending on the model, in particular on the order of the random walk.
 #' @param dic logical. If true. DIC will be computed
 #' @param parallel logical, should computation be done in parallel. This uses the parallel package, which does not allow parallel computing under Windows.
@@ -77,7 +77,7 @@ function(cases, population,
         age, period, cohort, overdisp=FALSE,
         period_covariate=NULL, cohort_covariate=NULL,
         periods_per_agegroup,
-        mcmc.options=list("number_of_iterations"=100000, "burn_in"=50000, "step"=50, "tuning"=500),
+        mcmc.options=list("number_of_iterations"="auto", "burn_in"="auto", "step"="auto", "tuning"=500),
         hyperpar=list("age"=c(1,0.5), "period"=c(1,0.0005), "cohort"=c(1,0.0005), "overdisp"=c(1,0.05)),
         dic=TRUE,
         parallel=TRUE, verbose=FALSE,
@@ -133,39 +133,27 @@ function(cases, population,
   if (parallel>4)chains=parallel
   if (unname(Sys.info()["sysname"] == "Windows"))parallel=FALSE
   
-  # have been options before
-  if (is.null(mcmc.options$burn_in))
-  {
-    burn_in=5000
-  }
-  else
-  {
-      burn_in=mcmc.options$burn_in
-  }
-  if(is.null(mcmc.options$number_of_iterations))
-    {
-    number_of_iterations=100000+burn_in
-  }
-  else
-  {
-        number_of_iterations=mcmc.options$number_of_iterations
-  }
-  if (is.null(mcmc.options$tuning))
-    {
-    tuning=500
-    }
-  else
-    {
-      tuning=mcmc.options$tuning
-    }
-  if (is.null(mcmc.options$step))
-  {
-    step=1
-    }
-  else
-  {
-      step=mcmc.options$step
-      }
+  ## Resolve the MCMC length. A numeric entry is used exactly as given (full
+  ## backward compatibility -- existing calls are unaffected). An entry left at
+  ## the default "auto" (or NULL) is filled from a data-aware heuristic: rare /
+  ## zero-heavy data (the high-population rare-event cells whose Polya-Gamma
+  ## augmentation mixes slowly) gets more iterations, well-populated data fewer.
+  ## burn_in then defaults to half the iterations and step keeps ~1000 stored
+  ## samples, so the stored-sample count is roughly constant across data sets.
+  is_auto <- function(x) is.null(x) || (length(x) == 1L && is.character(x) && x == "auto")
+  number_of_iterations <- if (is_auto(mcmc.options$number_of_iterations))
+    .bamp_auto_mcmc(cases) else mcmc.options$number_of_iterations
+  burn_in <- if (is_auto(mcmc.options$burn_in))
+    as.integer(round(number_of_iterations / 2)) else mcmc.options$burn_in
+  step <- if (is_auto(mcmc.options$step))
+    max(1L, as.integer(round((number_of_iterations - burn_in) / 1000))) else mcmc.options$step
+  tuning <- if (is.null(mcmc.options$tuning)) 500 else mcmc.options$tuning
+  if (burn_in >= number_of_iterations)
+    stop("burn_in must be smaller than number_of_iterations", call. = FALSE)
+  if (verbose && (is_auto(mcmc.options$number_of_iterations) ||
+                  is_auto(mcmc.options$burn_in) || is_auto(mcmc.options$step)))
+    cat(sprintf("Auto MCMC settings from data rarity: %d iterations, %d burn-in, step %d.\n",
+                number_of_iterations, burn_in, step))
   dataorder = 0
   number_of_agegroups=dim(cases)[2]
   number_of_periods=dim(cases)[1]
@@ -890,4 +878,22 @@ deviance<-coda::as.mcmc.list(deviance)
  output$ksi=ksi
  cat("\n")
  return(output)
+}
+
+## Internal: data-aware default for number_of_iterations. Rare / zero-heavy data
+## -- the high-population rare-event cells whose Polya-Gamma augmentation mixes
+## slowly -- needs more iterations to converge; well-populated data converges
+## quickly. Returns a recommended iteration count from a simple rarity score:
+## the fraction of zero cells, or half the fraction of very-low-count cells
+## (<=5 events), whichever is larger. Maps a rarity of 0 to 40000 iterations and
+## a rarity of 1 (essentially all cells empty/rare) to 120000, rounded to 1000.
+## Used only for mcmc.options entries left at "auto"; explicit numbers override.
+.bamp_auto_mcmc <- function(cases) {
+  Y <- suppressWarnings(as.numeric(as.matrix(cases)))
+  Y <- Y[is.finite(Y)]
+  if (!length(Y)) return(80000L)                 # no usable data: mid-range default
+  zero_frac <- mean(Y == 0)
+  rare_frac <- mean(Y <= 5)
+  rarity <- min(1, max(zero_frac, 0.5 * rare_frac))
+  as.integer(round((40000 + 80000 * rarity) / 1000) * 1000)
 }
