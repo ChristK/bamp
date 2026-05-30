@@ -54,12 +54,15 @@
 
 ## --- sample x ~ N(Q^{-1} bvec, Q^{-1}) subject to A x = 0 (conditioning by
 ##     Kriging, Rue & Held 2005, Alg. 2.6).  A is k x P (or NULL). ------------
-.pg_draw_block <- function(Q, bvec, A) {
+.pg_draw_block <- function(Q, bvec, A, tA = NULL) {
   R <- chol(Q)                                    # Q = R'R, R upper triangular
-  mu <- backsolve(R, forwardsolve(t(R), bvec))
+  ## solve R'R z = rhs without materialising t(R): backsolve(R, ., transpose=TRUE)
+  ## applies R'^{-1} (R is upper-tri), so this is forwardsolve(t(R), .) exactly.
+  mu <- backsolve(R, backsolve(R, bvec, transpose = TRUE))
   x  <- mu + backsolve(R, rnorm(length(bvec)))
   if (is.null(A)) return(x)
-  W  <- backsolve(R, forwardsolve(t(R), t(A)))    # Q^{-1} A'  (P x k)
+  if (is.null(tA)) tA <- t(A)
+  W  <- backsolve(R, backsolve(R, tA, transpose = TRUE))   # Q^{-1} A'  (P x k)
   as.numeric(x - W %*% solve(A %*% W, A %*% x))
 }
 
@@ -148,6 +151,7 @@
   if (has_a && has_p && has_c && ord_p == 2)
     Arows <- c(Arows, list(mkrow(iph, (1:J) - mean(1:J))))
   A <- if (length(Arows)) do.call(rbind, Arows) else NULL
+  tA <- if (is.null(A)) NULL else t(A)            # constant; hoisted out of the loop
   ## orthonormal basis of the constraint null space {beta : A beta = 0}, used by
   ## the Laplace-MH refinement to sample in the (unconstrained) free coordinates
   Zbasis <- if (is.null(A)) diag(P) else {
@@ -298,7 +302,7 @@
     ## ridge to make the (intrinsically rank-deficient) Q numerically PD; the
     ## constraints remove the corresponding null directions
     diag(Q) <- diag(Q) + 1e-6 * mean(diag(Q))
-    beta <- .pg_draw_block(Q, b, A)
+    beta <- .pg_draw_block(Q, b, A, tA)
     mu <- beta[ia]
     if (has_a) theta <- beta[ith]
     if (has_p) phi   <- beta[iph]
@@ -382,7 +386,8 @@
       diag(H) <- diag(H) + 1e-6 * mean(diag(H))
       Hg <- crossprod(Zbasis, H %*% Zbasis); gg <- as.numeric(crossprod(Zbasis, g))
       R <- chol(Hg)
-      mean_g <- as.numeric(crossprod(Zbasis, bv)) + backsolve(R, forwardsolve(t(R), gg))
+      mean_g <- as.numeric(crossprod(Zbasis, bv)) +
+                backsolve(R, backsolve(R, gg, transpose = TRUE))
       lp <- sum(Y * e - N * softplus(e)) -
             0.5 * ((if (has_a) kappa  * as.numeric(bv[ith] %*% sa$K %*% bv[ith]) else 0) +
                    (if (has_p) lambda * as.numeric(bv[iph] %*% sp$K %*% bv[iph]) else 0) +
