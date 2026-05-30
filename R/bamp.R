@@ -12,7 +12,16 @@
 #' @param mcmc.options list of options for MCMC. \itemize{\item number_of_iterations: number of iterations per chain. \item burn_in: number of iterations used as burnin at the beginning of the algorithm, these iterations will be removed. \item step: Step size, so only every step-th iteration is stored. \item tuning: number of iterations for automatic tuning (used by \code{method="iwls"}). Depending on the model, the MCMC algorithm will tune certain parameters for more efficient MCMC chains. After tuning, the algorithm is restarted.} Each of \code{number_of_iterations}, \code{burn_in} and \code{step} may be a number or the string \code{"auto"} (the default). \code{"auto"} chooses the value from the data: rare or zero-heavy counts (whose rare-event cells mix more slowly) get more iterations (from 40000 for well-populated data up to 120000 when almost every cell is empty or has very few events), \code{burn_in} defaults to half the iterations, and \code{step} is set to keep about 1000 stored samples per chain. Any value given as a number is used exactly as supplied, so explicit settings reproduce the previous behaviour.
 #' @param hyperpar list of hyper parameters. The hyper prior for the precision (inverse variance) in the random walk priors is a Gamma distribution with parameters \eqn{a} and \eqn{b}; expected value is \eqn{a/b}, variance is \eqn{a/b^2}. Weak hyper parameters are suggested, defaults are \eqn{a=1, b=0.5} for age, \eqn{a=1, b=0.0005} for period and cohort effects and \eqn{a=1, b=0.05} for overdispersion (if added). It is recommended to choose the hyper priors depending on the model, in particular on the order of the random walk.
 #' @param dic logical. If true. DIC will be computed
-#' @param parallel logical, should computation be done in parallel. This uses the parallel package, which does not allow parallel computing under Windows.
+#' @param parallel should the chains be run in parallel. \code{TRUE}/\code{FALSE},
+#' or a number giving the requested number of cores (capped at the number of
+#' chains). Uses the \code{parallel} package: forked workers
+#' (\code{\link[parallel]{mclapply}}) on Unix and macOS, and -- for
+#' \code{method = "pg"} -- a PSOCK cluster on Windows (where forking is
+#' unavailable), so the default engine now runs in parallel on all platforms.
+#' (The legacy \code{method = "iwls"} engine still runs serially on Windows.)
+#' Parallel runs are reproducible: the per-chain seeds are drawn in the main
+#' process, so a given \code{set.seed()} yields the same result serially or in
+#' parallel.
 #' @param verbose verbose mode
 #' @param method MCMC engine. \code{"pg"} (default) is a joint sampler that
 #' combines Polya-Gamma data augmentation (Polson, Scott & Windle 2013) with a

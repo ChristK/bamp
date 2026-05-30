@@ -514,13 +514,36 @@
   ## iwls path, where cores <- parallel); a bare TRUE means getOption('mc.cores').
   ## Capped at the number of chains. Previously cores were hard-capped at 2, so
   ## parallel=4 ran 4 chains on only 2 cores and PG wall-clock was ~2x inflated.
-  run_par <- (isTRUE(parallel) || (is.numeric(parallel) && parallel > 1)) &&
-             .Platform$OS.type != "windows"
-  if (run_par) {
-    req <- if (is.numeric(parallel)) parallel else getOption("mc.cores", 2L)
-    cores <- max(1L, min(n_chains, req))
-    parallel::mclapply(seeds, runner, mc.cores = cores)
-  } else {
-    lapply(seeds, runner)
+  want_par <- isTRUE(parallel) || (is.numeric(parallel) && parallel > 1)
+  if (!want_par) return(lapply(seeds, runner))
+  req <- if (is.numeric(parallel)) parallel else getOption("mc.cores", 2L)
+  cores <- max(1L, min(n_chains, req))
+
+  if (.Platform$OS.type != "windows") {
+    ## Unix/macOS: fork-based parallelism. Each forked worker inherits the parent
+    ## RNG state but .bamp_pg_chain re-seeds with its own pre-drawn `seed`, so the
+    ## result is identical to the serial path for a given top-level set.seed().
+    return(parallel::mclapply(seeds, runner, mc.cores = cores))
   }
+
+  ## Windows: no fork(), so mclapply cannot parallelise. Use a PSOCK cluster of
+  ## fresh R worker processes instead. The chains stay reproducible because the
+  ## per-chain seeds are drawn in the parent (above) and passed to the workers,
+  ## and .bamp_pg_chain seeds itself from them; the cluster mechanism does not
+  ## touch which seeds the chains receive. If the cluster cannot be created we
+  ## fall back to running the chains serially rather than failing.
+  cl <- tryCatch(parallel::makePSOCKcluster(cores), error = function(e) NULL)
+  if (is.null(cl)) {
+    if (verbose) cat("Could not start a PSOCK cluster; running chains serially.\n")
+    return(lapply(seeds, runner))
+  }
+  on.exit(parallel::stopCluster(cl), add = TRUE)
+  ## load the bamp namespace on each fresh worker (so the exported `runner`
+  ## closure, whose environment reaches into the namespace, deserialises and can
+  ## call .bamp_pg_chain), then export `runner` -- which closes over all the
+  ## inputs and calls .bamp_pg_chain by name -- and apply it to the pre-drawn
+  ## seeds, exactly as the fork path does.
+  parallel::clusterEvalQ(cl, suppressMessages(requireNamespace("bamp", quietly = TRUE)))
+  parallel::clusterExport(cl, varlist = "runner", envir = environment())
+  parallel::parLapply(cl, seeds, runner)
 }

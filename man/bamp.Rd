@@ -51,7 +51,16 @@ bamp(
 
 \item{dic}{logical. If true. DIC will be computed}
 
-\item{parallel}{logical, should computation be done in parallel. This uses the parallel package, which does not allow parallel computing under Windows.}
+\item{parallel}{should the chains be run in parallel. \code{TRUE}/\code{FALSE},
+or a number giving the requested number of cores (capped at the number of
+chains). Uses the \code{parallel} package: forked workers
+(\code{\link[parallel]{mclapply}}) on Unix and macOS, and -- for
+\code{method = "pg"} -- a PSOCK cluster on Windows (where forking is
+unavailable), so the default engine now runs in parallel on all platforms.
+(The legacy \code{method = "iwls"} engine still runs serially on Windows.)
+Parallel runs are reproducible: the per-chain seeds are drawn in the main
+process, so a given \code{set.seed()} yields the same result serially or in
+parallel.}
 
 \item{verbose}{verbose mode}
 

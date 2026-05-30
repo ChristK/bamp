@@ -75,6 +75,18 @@ package easier to use well. A detailed, self-contained account of every change
   complex model is adopted only when clearly better. Axes can be pinned to
   restrict the search (e.g. `age = "rw2"`).
 
+* **Parallel chains on Windows (`method = "pg"`).** The chains of the default
+  engine now run in parallel on Windows too. On Unix and macOS the chains are run
+  in forked workers (`parallel::mclapply`) as before; on Windows, where forking
+  is unavailable, the engine now starts a PSOCK cluster
+  (`parallel::makePSOCKcluster` + `parLapply`) instead of falling back to running
+  the chains serially. This is reproducible and mechanism-independent: the
+  per-chain seeds are drawn in the main process, so a given `set.seed()` produces
+  bit-identical chains whether they run forked, on a socket cluster, or serially
+  (verified). If a cluster cannot be created the engine falls back to serial
+  rather than failing. (The legacy `method = "iwls"` engine still runs serially on
+  Windows.)
+
 * **Data-adaptive MCMC length (new default).** Each of `number_of_iterations`,
   `burn_in` and `step` in `mcmc.options` may be a number or the string `"auto"`
   (the new default). With `"auto"`, the iteration count is chosen from the
