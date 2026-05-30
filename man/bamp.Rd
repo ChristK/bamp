@@ -21,7 +21,7 @@ bamp(
   dic = TRUE,
   parallel = TRUE,
   verbose = FALSE,
-  method = c("iwls", "pg"),
+  method = c("pg", "iwls"),
   prior_scale = FALSE,
   pg_engine = c("C", "R")
 )
@@ -55,22 +55,24 @@ bamp(
 
 \item{verbose}{verbose mode}
 
-\item{method}{MCMC engine. \code{"iwls"} (default) is the original block
-Metropolis-Hastings sampler with IWLS proposals. \code{"pg"} is a joint
-sampler that combines Polya-Gamma data augmentation (Polson, Scott & Windle
-2013) with a Laplace (Newton) Metropolis-Hastings refinement: each sweep
-draws the intercept and the age, period and cohort effects jointly in one
-exact Gibbs step and then refines them with a joint Newton proposal against
-the true binomial likelihood. It has no Metropolis tuning, never restarts on
-low acceptance and does not prune chains; it is markedly more robust for RW2
+\item{method}{MCMC engine. \code{"pg"} (default) is a joint sampler that
+combines Polya-Gamma data augmentation (Polson, Scott & Windle 2013) with a
+Laplace (Newton) Metropolis-Hastings refinement: each sweep draws the
+intercept and the age, period and cohort effects jointly in one exact Gibbs
+step and then refines them with a joint Newton proposal against the true
+binomial likelihood. It has no Metropolis tuning, never restarts on low
+acceptance and does not prune chains; it is markedly more robust for RW2
 priors and converges the high-population, rare-event cells of
 incidence/mortality data that the Gibbs step alone mixes only slowly. It
 natively supports all of the package's models -- RW1/RW2 priors,
 heterogeneity (\code{"rw1+het"}/\code{"rw2+het"}), overdispersion and
-period/cohort covariates -- with no fallback to \code{"iwls"}. The Polya-Gamma
-weights use a normal approximation that is essentially exact for the large
-population counts of incidence/mortality data, so it typically needs far
-fewer iterations than the default.}
+period/cohort covariates. The Polya-Gamma weights use a normal approximation
+that is essentially exact for the large population counts of
+incidence/mortality data, so it typically needs far fewer iterations than the
+legacy sampler. \code{"iwls"} is the original block Metropolis-Hastings
+sampler with IWLS proposals (the default in versions before 2.2.0); it remains
+available and can be faster on well-behaved (non rare-event) data, but it can
+fail to converge or prune all chains on sparse/zero-cell data.}
 
 \item{prior_scale}{logical; only used by \code{method="pg"}. If \code{TRUE},
 the intrinsic random-walk structure matrices are scaled to unit generalised

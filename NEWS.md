@@ -1,4 +1,14 @@
 # bamp 2.2.0
+* **`method = "pg"` is now the default sampler** (previously `"iwls"`). The
+  Polya-Gamma sampler is feature-complete (RW1/RW2, heterogeneity, overdispersion,
+  period/cohort covariates), markedly more robust on the sparse, zero-cell,
+  rare-event data typical of incidence/mortality modelling -- where the legacy
+  IWLS sampler can fail to converge or prune all of its chains -- and, with the
+  compiled engine below, comparable in speed. The original IWLS block
+  Metropolis-Hastings sampler remains fully available via `method = "iwls"` and
+  can still be the faster choice on well-behaved (non rare-event) data. Existing
+  calls that did not set `method` will now use `"pg"`; pass `method = "iwls"`
+  explicitly to keep the previous behaviour.
 * The `method = "pg"` sampler now has a compiled C implementation of its inner
   loop, selected by the new `pg_engine` argument (`"C"`, the default, or `"R"`).
   Both engines run the identical algorithm and, for a given seed, produce the
