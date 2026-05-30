@@ -186,22 +186,29 @@
     omega <- matrix(.pg_rpg(as.numeric(N), as.numeric(eta)), I, J)
 
     ## ---- Polya-Gamma joint Gibbs draw of (mu, theta, phi, psi) ----
-    ## the smooth block's working response removes the cell effect: the target is
-    ## omega*(z - delta) with z = ymh/omega, i.e. b = X'(ymh - omega*delta).
+    ## With overdispersion, marginalise the cell effect delta out of the smooth
+    ## update (collapsed Gibbs). Given omega and zeta, integrating delta_ij gives
+    ## the smooth predictor a per-cell working precision wgt = omega*zeta/(omega+
+    ## zeta) and response X'(wgt*z) = X'(zeta/(omega+zeta) * ymh) (z = ymh/omega).
+    ## Drawing the smooth block from this marginal, then delta | smooth below, is
+    ## an exact joint draw of (smooth, delta) and removes the structured/
+    ## unstructured confounding that makes the alternating Gibbs mix very slowly.
     b <- numeric(P)
     if (has_od) {
-      ymh_b <- ymh - omega * delta_ij
-      b[ia] <- sum(ymh_b)
-      if (has_a) b[ith] <- rowSums(ymh_b)
-      if (has_p) b[iph] <- colSums(ymh_b)
-      if (has_c) { v <- numeric(K); ag <- rowsum(as.numeric(ymh_b), cohv); v[as.integer(rownames(ag))] <- ag; b[ips] <- v }
+      wgt <- omega * zeta / (omega + zeta)
+      bm  <- ymh * zeta / (omega + zeta)              # = wgt * z
+      b[ia] <- sum(bm)
+      if (has_a) b[ith] <- rowSums(bm)
+      if (has_p) b[iph] <- colSums(bm)
+      if (has_c) { v <- numeric(K); ag <- rowsum(as.numeric(bm), cohv); v[as.integer(rownames(ag))] <- ag; b[ips] <- v }
     } else {
+      wgt <- omega
       b[ia] <- b_mu0
       if (has_a) b[ith] <- b_th0
       if (has_p) b[iph] <- b_ph0
       if (has_c) b[ips] <- b_ps0
     }
-    Q <- assemble_prec(omega, kappa, lambda, ny)
+    Q <- assemble_prec(wgt, kappa, lambda, ny)
     ## ridge to make the (intrinsically rank-deficient) Q numerically PD; the
     ## constraints remove the corresponding null directions
     diag(Q) <- diag(Q) + 1e-6 * mean(diag(Q))
