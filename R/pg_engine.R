@@ -72,7 +72,8 @@
                            prior_scale = TRUE, init = "empirical",
                            overdisp = FALSE, z_hyper = c(1, 0.05),
                            het = c(FALSE, FALSE, FALSE),
-                           cov_p = NULL, cov_c = NULL) {
+                           cov_p = NULL, cov_c = NULL, engine = c("R", "C")) {
+  engine <- match.arg(engine)
   set.seed(seed)
   I <- nrow(Y); J <- ncol(Y); K <- ppa * (I - 1) + J
   has_a <- ord_a > 0; has_p <- ord_p > 0; has_c <- ord_c > 0
@@ -261,6 +262,48 @@
   softplus <- function(e) ifelse(e > 0, e + log1p(exp(-e)), log1p(exp(e)))
 
   acc_mh <- 0L; n_mh <- 0L
+
+  ## ---- native-C engine -----------------------------------------------------
+  ## Dispatch the whole inner loop to src/pg_engine.c (.Call) when engine="C".
+  ## All setup above (structure matrices, constraint A, Zbasis null-space basis,
+  ## empirical init, index maps, hyperparameters) is reused verbatim and passed
+  ## in; the C code reproduces this R loop's RNG stream exactly (set.seed(seed)
+  ## above seeds both), so engine="C" matches engine="R" to floating-point. The
+  ## return list has the identical shape, so the driver/output code is unchanged.
+  if (engine == "C") {
+    cargs <- list(
+      I = I, J = J, K = K,
+      has_a = as.integer(has_a), has_p = as.integer(has_p), has_c = as.integer(has_c),
+      het_a = as.integer(het_a), het_p = as.integer(het_p), het_c = as.integer(het_c),
+      coh = matrix(cohv, I, J),
+      saK = if (has_a) sa$K else NULL, spK = if (has_p) sp$K else NULL,
+      scK = if (has_c) sc$K else NULL,
+      cov_p = if (has_pcov) cov_p else NULL, cov_c = if (has_ccov) cov_c else NULL,
+      Y = Y * 1.0, N = N * 1.0, ymh = ymh,
+      n_iter = as.integer(n_iter), burn_in = as.integer(burn_in), thin = as.integer(thin),
+      overdisp = as.integer(has_od), z_hyper_a = z_hyper[1], z_hyper_b = z_hyper[2],
+      sa_a = if (has_a) sa$a else 1, sa_b = if (has_a) sa$b else 1,
+      sa_rank = as.integer(if (has_a) sa$rank else 0),
+      sp_a = if (has_p) sp$a else 1, sp_b = if (has_p) sp$b else 1,
+      sp_rank = as.integer(if (has_p) sp$rank else 0),
+      sc_a = if (has_c) sc$a else 1, sc_b = if (has_c) sc$b else 1,
+      sc_rank = as.integer(if (has_c) sc$rank else 0),
+      k2a_a = k2hp_a[1], k2a_b = k2hp_a[2], k2p_a = k2hp_p[1], k2p_b = k2hp_p[2],
+      k2c_a = k2hp_c[1], k2c_b = k2hp_c[2],
+      A = A, Zbasis = Zbasis,
+      mu0 = mu, theta0 = theta, phi0 = phi)
+    r <- .Call("pg_chain_c", cargs, PACKAGE = "bamp")
+    ## match the R path's NULL-ing of absent components
+    r$zeta   <- if (has_od) r$zeta   else NULL
+    r$theta2 <- if (het_a)  r$theta2 else NULL
+    r$phi2   <- if (het_p)  r$phi2   else NULL
+    r$psi2   <- if (het_c)  r$psi2   else NULL
+    r$kappa2 <- if (het_a)  r$kappa2 else NULL
+    r$lambda2<- if (het_p)  r$lambda2 else NULL
+    r$ny2    <- if (het_c)  r$ny2    else NULL
+    r$mh_accept <- NA_real_
+    return(r)
+  }
 
   for (it in 1:n_iter) {
     eta <- mu + outer(theta, pe(phi), "+") + matrix(ce(psi)[cohidx], I, J) +
@@ -460,12 +503,13 @@
                      prior_scale = TRUE, verbose = FALSE,
                      overdisp = FALSE, z_hyper = c(1, 0.05),
                      het = c(FALSE, FALSE, FALSE),
-                     cov_p = NULL, cov_c = NULL) {
+                     cov_p = NULL, cov_c = NULL, engine = c("R", "C")) {
+  engine <- match.arg(engine)
   seeds <- sample.int(.Machine$integer.max, n_chains)
   runner <- function(s) .bamp_pg_chain(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
                                        n_iter, burn_in, thin, s, prior_scale,
                                        overdisp = overdisp, z_hyper = z_hyper, het = het,
-                                       cov_p = cov_p, cov_c = cov_c)
+                                       cov_p = cov_p, cov_c = cov_c, engine = engine)
   ## Honour a numeric `parallel` as the requested number of cores (matching the
   ## iwls path, where cores <- parallel); a bare TRUE means getOption('mc.cores').
   ## Capped at the number of chains. Previously cores were hard-capped at 2, so

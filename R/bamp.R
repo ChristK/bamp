@@ -37,8 +37,15 @@
 #' which keeps the same prior parameterisation (and the same default
 #' hyper-parameters) as \code{method="iwls"}; if you set it to \code{TRUE} you
 #' should choose hyper-parameters appropriate for the scaled prior.
+#' @param pg_engine implementation of the \code{method="pg"} sampler, one of
+#' \code{"C"} (default) or \code{"R"}. Both run the identical algorithm and,
+#' for a given seed, produce the same draws to floating-point tolerance; the
+#' \code{"C"} engine is a compiled port of the inner loop (no extra package
+#' dependency) and is roughly twice as fast. \code{"R"} is the readable
+#' reference implementation, kept for verification. Ignored for
+#' \code{method="iwls"}.
 #'
-#' @description 
+#' @description
 #' Bayesian Age-Period-Cohort Modeling for the analyze of incidence or mortality data on the Lexis diagram.
 #' For each pixel in the Lexis diagram (that is for a specific age group and specific period) data must be available on the number of persons under risk (population number) and the number of disease cases (typically cancer incidence or mortality).
 #' A hierarchical model is assumed with a binomial model in the first-stage. As smoothing priors for the age, period and cohort parameters random walks of first and second order (RW1 or RW2) available.
@@ -72,9 +79,10 @@ function(cases, population,
         hyperpar=list("age"=c(1,0.5), "period"=c(1,0.0005), "cohort"=c(1,0.0005), "overdisp"=c(1,0.05)),
         dic=TRUE,
         parallel=TRUE, verbose=FALSE,
-        method=c("iwls","pg"), prior_scale=FALSE){
+        method=c("iwls","pg"), prior_scale=FALSE, pg_engine=c("C","R")){
   output=apc()
   method <- match.arg(method)
+  pg_engine <- match.arg(pg_engine)
 
   ## The Polya-Gamma Gibbs engine natively supports plain RW1/RW2 priors,
   ## overdispersion, heterogeneity and period/cohort covariates -- there is no
@@ -620,7 +628,7 @@ if (verbose)
                   hyper_pg, number_of_iterations, burn_in, step, chains,
                   parallel = parallel, prior_scale = prior_scale, verbose = verbose,
                   overdisp = (z_mode == 1), z_hyper = c(z_hyperpar_a, z_hyperpar_b),
-                  het = het_pg, cov_p = cov_p, cov_c = cov_c)
+                  het = het_pg, cov_p = cov_p, cov_c = cov_c, engine = pg_engine)
    sumkick <- chains
    mkmat <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(r[[field]])))
    mkvec <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r[[field]], ncol = 1))))

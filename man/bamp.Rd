@@ -22,7 +22,8 @@ bamp(
   parallel = TRUE,
   verbose = FALSE,
   method = c("iwls", "pg"),
-  prior_scale = FALSE
+  prior_scale = FALSE,
+  pg_engine = c("C", "R")
 )
 }
 \arguments{
@@ -78,6 +79,14 @@ across data sets of different size and grid. The default is \code{FALSE},
 which keeps the same prior parameterisation (and the same default
 hyper-parameters) as \code{method="iwls"}; if you set it to \code{TRUE} you
 should choose hyper-parameters appropriate for the scaled prior.}
+
+\item{pg_engine}{implementation of the \code{method="pg"} sampler, one of
+\code{"C"} (default) or \code{"R"}. Both run the identical algorithm and,
+for a given seed, produce the same draws to floating-point tolerance; the
+\code{"C"} engine is a compiled port of the inner loop (no extra package
+dependency) and is roughly twice as fast. \code{"R"} is the readable
+reference implementation, kept for verification. Ignored for
+\code{method="iwls"}.}
 }
 \description{
 Bayesian Age-Period-Cohort Modeling for the analyze of incidence or mortality data on the Lexis diagram.

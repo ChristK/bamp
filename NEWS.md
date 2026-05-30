@@ -1,4 +1,15 @@
 # bamp 2.2.0
+* The `method = "pg"` sampler now has a compiled C implementation of its inner
+  loop, selected by the new `pg_engine` argument (`"C"`, the default, or `"R"`).
+  Both engines run the identical algorithm and, for a given seed, produce the
+  same draws to floating-point tolerance (verified to ~1e-10 across the full
+  feature matrix -- plain RW1/RW2, overdispersion, heterogeneity, period/cohort
+  covariates and their combinations -- end to end through `bamp()`); the C engine
+  is roughly twice as fast on real incidence/mortality data. It uses only the
+  R C API and the LAPACK/BLAS the package already links -- no new dependency
+  (no Rcpp/RcppEigen). The readable `pg_engine = "R"` reference implementation is
+  retained as the verification oracle. The C and R engines share the random-number
+  stream draw-for-draw, so results are reproducible and comparable across engines.
 * `predict_apc(object, periods = 0)` (the retrospective, no-forecast case used for
   model checking) no longer errors. The random-walk extrapolation helper looped
   over `(n1+1):n2`, which counts *downward* when `n2 == n1` (i.e. `periods = 0`),
