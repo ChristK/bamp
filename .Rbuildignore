@@ -1,5 +1,6 @@
 ^graphify-out$
 ^\.claude$
 ^\.serena$
+^CHANGES-2\.2\.0\.md$
 ^.*\.Rcheck$
 ^.*\.tar\.gz$
