@@ -123,7 +123,12 @@ effects.apc<-function(object, mean=FALSE, quantiles=0.5, update=FALSE,
   # against NA / empty / length-0 so the && below can never see NA or logical(0)
   pres <- function(z) length(z) == 1L && !is.na(z) && z != " "
   full <- pres(m[["age"]]) && pres(m[["period"]]) && pres(m[["cohort"]])
-  eff <- if (!full || convention == "none") "none" else convention
+  # covariate models: the period/cohort effect is stored as the absolute
+  # (covariate-scaled) contribution phi_j*x_j, so the linear-trend transform
+  # (which assumes an additive phi_j) is no longer eta-preserving -- skip the
+  # gauge and return the raw effects (as for non-full-APC models).
+  has_cov <- !is.null(object[["covariate"]])
+  eff <- if (!full || convention == "none" || has_cov) "none" else convention
 
   # exact [[ ]] extraction: object$samples also holds age_parameter/period_parameter/
   # cohort_parameter, and $ partial-matching could silently grab those if a primary

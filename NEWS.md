@@ -1,4 +1,19 @@
 # bamp 2.2.0
+* The `method = "pg"` engine now supports period and cohort covariates
+  (`period_covariate` / `cohort_covariate`) natively, completing its model
+  coverage -- it now handles the full `bamp` model space with no fallback to
+  `method = "iwls"`. A covariate scales its effect's contribution to the linear
+  predictor (`phi_j * x_j`); it enters the joint Gaussian draw as a column
+  scaling of the design (the affected block's likelihood couplings scale by the
+  covariate, its diagonal by the covariate squared). The stored effect is the
+  absolute (scaled) contribution, so `plot()` recovers the relative coefficient
+  by dividing by the covariate. On data simulated from `apcSimulate` with a known
+  covariate the engine recovers the relative effect; with a constant covariate it
+  reproduces the no-covariate fit exactly. (The legacy `method = "iwls"`
+  covariate path is unreliable, so `apcSimulate` -- not `iwls` -- is the
+  validation oracle; `"pg"` is the supported covariate engine.) The display gauge
+  `convention` in `effects()` / `plot()` is not applied to covariate models (the
+  linear-trend transform assumes an additive effect), as for non-full-APC models.
 * The `method = "pg"` engine now supports heterogeneity models (`"rw1+het"`,
   `"rw2+het"`) natively instead of falling back to `method = "iwls"`. The iid
   heterogeneity component of each effect is drawn jointly with the intercept and
@@ -9,7 +24,7 @@
   it agrees with the iwls engine on the combined effect curve and the DIC. By
   default `effects()` and `plot()` still show the smooth component only (as
   before); the new `combined = TRUE` argument returns the full effect (smooth +
-  heterogeneity). Covariate models still fall back to `method = "iwls"`.
+  heterogeneity).
 * The `method = "pg"` engine now supports overdispersion (`overdisp = TRUE`)
   natively instead of falling back to `method = "iwls"`. The cell-level random
   effect is marginalised out of the joint draw of the intercept and the age,
@@ -21,7 +36,6 @@
   the DIC and the smooth effect curves all agree to within Monte-Carlo error on
   simulated and real data) and converges on the strongly overdispersed
   incidence/mortality data where the binomial-only model is badly misspecified.
-  Heterogeneity and covariate models still fall back to `method = "iwls"`.
 * `plot()` of an apc object now works for any number of plotted `quantiles`:
   a single quantile no longer errors with "incorrect number of dimensions",
   and vectors of length 2 or 4 no longer error with "invalid line type" (the

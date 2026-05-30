@@ -68,10 +68,28 @@
                            hyper, n_iter, burn_in, thin, seed,
                            prior_scale = TRUE, init = "empirical",
                            overdisp = FALSE, z_hyper = c(1, 0.05),
-                           het = c(FALSE, FALSE, FALSE)) {
+                           het = c(FALSE, FALSE, FALSE),
+                           cov_p = NULL, cov_c = NULL) {
   set.seed(seed)
   I <- nrow(Y); J <- ncol(Y); K <- ppa * (I - 1) + J
   has_a <- ord_a > 0; has_p <- ord_p > 0; has_c <- ord_c > 0
+  ## covariates: a known positive multiplier x scaling the period/cohort EFFECT.
+  ## The period effect contributes phi_j*cov_p[j] (resp. psi_k*cov_c[k]) to cell
+  ## (i,j); the RW prior, precision draws and constraints act on the relative
+  ## coefficient phi/psi, while the linear predictor and the STORED output use
+  ## the absolute (covariate-scaled) effect -- so plot.apc, which divides the
+  ## stored effect by the covariate, recovers the relative coefficient. cov_p/
+  ## cov_c are NULL (no covariate) or a positive vector (caller normalises it to
+  ## mean 1). Note: a per-effect covariate excludes het on the SAME effect (the
+  ## block encoding cannot represent rw+het+cov), so the covariate only ever
+  ## scales the smooth block. The helpers pe()/ce() map a coefficient to its
+  ## contribution and are exact no-ops when the covariate is absent.
+  has_pcov <- !is.null(cov_p) && has_p
+  has_ccov <- !is.null(cov_c) && has_c
+  if (has_pcov) stopifnot(length(cov_p) == J, all(is.finite(cov_p)), min(cov_p) > 1e-8)
+  if (has_ccov) stopifnot(length(cov_c) == K, all(is.finite(cov_c)), min(cov_c) > 1e-8)
+  pe <- function(ph) if (has_pcov) ph * cov_p else ph
+  ce <- function(ps) if (has_ccov) ps * cov_c else ps
   ## heterogeneity: an extra iid-Normal component on each effect, drawn JOINTLY
   ## with the smooth effects in the one-block Gaussian draw (the het component
   ## shares the effect index, so a separate block would confound badly). het can
@@ -199,19 +217,34 @@
     if (has_p && has_c) { PP <- matrix(0, J, K); PP[idxP] <- wv }
     csum <- if (!has_c) NULL else if (!is.null(TP)) colSums(TP) else if (!is.null(PP)) colSums(PP)
             else { v <- numeric(K); ag <- rowsum(wv, cohv); v[as.integer(rownames(ag))] <- ag; v }
+    ## covariate column-scaling of the likelihood couplings: scaling the period
+    ## design column j by cov_p[j] (cohort column k by cov_c[k]) makes the period
+    ## block see weight cs*cov_p in the intercept coupling (x^1) and cs*cov_p^2 on
+    ## the diagonal (x^2); each cross-block picks up one factor of x per scaled
+    ## effect (so the period<->cohort block gets cov_p on its rows and cov_c on
+    ## its columns). All exact no-ops when the covariate is absent.
+    cs_l <- if (has_pcov) cs * cov_p     else cs
+    cs_d <- if (has_pcov) cs * cov_p^2   else cs
+    cm_l <- if (has_ccov) csum * cov_c   else csum
+    cm_d <- if (has_ccov) csum * cov_c^2 else csum
+    w_ap <- if (has_pcov) sweep(w, 2, cov_p, "*") else w
+    TPc  <- if (has_ccov && !is.null(TP)) sweep(TP, 2, cov_c, "*") else TP
+    PPc  <- PP
+    if (has_pcov && !is.null(PPc)) PPc <- PPc * cov_p                # row j * cov_p[j]
+    if (has_ccov && !is.null(PPc)) PPc <- sweep(PPc, 2, cov_c, "*")  # col k * cov_c[k]
     ag_g <- c(if (has_a) list(ith) else NULL, if (het_a) list(ith2) else NULL)
     pg_g <- c(if (has_p) list(iph) else NULL, if (het_p) list(iph2) else NULL)
     cg_g <- c(if (has_c) list(ips) else NULL, if (het_c) list(ips2) else NULL)
     Qm[ia, ia] <- sum(w)
     for (g in ag_g) { Qm[ia, g] <- rs;   Qm[g, ia] <- rs }
-    for (g in pg_g) { Qm[ia, g] <- cs;   Qm[g, ia] <- cs }
-    for (g in cg_g) { Qm[ia, g] <- csum; Qm[g, ia] <- csum }
+    for (g in pg_g) { Qm[ia, g] <- cs_l; Qm[g, ia] <- cs_l }
+    for (g in cg_g) { Qm[ia, g] <- cm_l; Qm[g, ia] <- cm_l }
     for (g1 in ag_g) for (g2 in ag_g) Qm[g1, g2] <- diag(rs, I)
-    for (g1 in pg_g) for (g2 in pg_g) Qm[g1, g2] <- diag(cs, J)
-    for (g1 in cg_g) for (g2 in cg_g) Qm[g1, g2] <- diag(csum, K)
-    for (g1 in ag_g) for (g2 in pg_g) { Qm[g1, g2] <- w;  Qm[g2, g1] <- t(w) }
-    if (!is.null(TP)) for (g1 in ag_g) for (g2 in cg_g) { Qm[g1, g2] <- TP; Qm[g2, g1] <- t(TP) }
-    if (!is.null(PP)) for (g1 in pg_g) for (g2 in cg_g) { Qm[g1, g2] <- PP; Qm[g2, g1] <- t(PP) }
+    for (g1 in pg_g) for (g2 in pg_g) Qm[g1, g2] <- diag(cs_d, J)
+    for (g1 in cg_g) for (g2 in cg_g) Qm[g1, g2] <- diag(cm_d, K)
+    for (g1 in ag_g) for (g2 in pg_g) { Qm[g1, g2] <- w_ap;  Qm[g2, g1] <- t(w_ap) }
+    if (!is.null(TP)) for (g1 in ag_g) for (g2 in cg_g) { Qm[g1, g2] <- TPc; Qm[g2, g1] <- t(TPc) }
+    if (!is.null(PP)) for (g1 in pg_g) for (g2 in cg_g) { Qm[g1, g2] <- PPc; Qm[g2, g1] <- t(PPc) }
     if (has_a) Qm[ith, ith] <- Qm[ith, ith] + kap  * sa$K
     if (has_p) Qm[iph, iph] <- Qm[iph, iph] + lam  * sp$K
     if (has_c) Qm[ips, ips] <- Qm[ips, ips] + nyv  * sc$K
@@ -226,7 +259,7 @@
   acc_mh <- 0L; n_mh <- 0L
 
   for (it in 1:n_iter) {
-    eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
+    eta <- mu + outer(theta, pe(phi), "+") + matrix(ce(psi)[cohidx], I, J) +
            het_eta() + (if (has_od) delta_ij else 0)
     omega <- matrix(.pg_rpg(as.numeric(N), as.numeric(eta)), I, J)
 
@@ -253,6 +286,10 @@
       if (has_p) b[iph] <- b_ph0
       if (has_c) b[ips] <- b_ps0
     }
+    ## covariate: the period/cohort design column is x-scaled, so its response
+    ## entry picks up one factor of x (no-op when the covariate is absent).
+    if (has_pcov) b[iph] <- b[iph] * cov_p
+    if (has_ccov) b[ips] <- b[ips] * cov_c
     ## het components share the smooth likelihood design -> same b entries
     if (het_a) b[ith2] <- b[ith]
     if (het_p) b[iph2] <- b[iph]
@@ -272,7 +309,7 @@
 
     ## ---- overdispersion: cell effect delta_ij | rest ~ N, precision zeta | delta ~ Gamma
     if (has_od) {
-      eta0 <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) + het_eta()  # smooth + het, no delta
+      eta0 <- mu + outer(theta, pe(phi), "+") + matrix(ce(psi)[cohidx], I, J) + het_eta()  # smooth + het, no delta
       precd <- omega + zeta
       mden <- (ymh - omega * eta0) / precd                             # = omega*(z - eta0)/precd
       delta_ij <- matrix(mden + rnorm(I * J) / sqrt(precd), I, J)
@@ -292,7 +329,7 @@
     ## (Yu & Meng 2011).  Rescaling the effect and its precision together breaks
     ## the precision-effect coupling that otherwise slows mixing, especially for
     ## the smoothing of weakly-informed cells in highly informative data. -------
-    eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
+    eta <- mu + outer(theta, pe(phi), "+") + matrix(ce(psi)[cohidx], I, J) +
            het_eta() + (if (has_od) delta_ij else 0)
     zwork <- ymh / omega
     nc_step <- function(x, prec, a, b, make_deta) {
@@ -306,8 +343,8 @@
       } else list(x = x, prec = prec)
     }
     if (has_a) { r <- nc_step(theta, kappa,  sa$a, sa$b, function(d) matrix(d, I, J));            theta <- r$x; kappa  <- r$prec }
-    if (has_p) { r <- nc_step(phi,   lambda, sp$a, sp$b, function(d) matrix(d, I, J, byrow = TRUE)); phi <- r$x; lambda <- r$prec }
-    if (has_c) { r <- nc_step(psi,   ny,     sc$a, sc$b, function(d) matrix(d[cohidx], I, J));      psi   <- r$x; ny     <- r$prec }
+    if (has_p) { r <- nc_step(phi,   lambda, sp$a, sp$b, function(d) matrix(pe(d), I, J, byrow = TRUE)); phi <- r$x; lambda <- r$prec }
+    if (has_c) { r <- nc_step(psi,   ny,     sc$a, sc$b, function(d) matrix(ce(d)[cohidx], I, J));      psi   <- r$x; ny     <- r$prec }
 
     ## ---- Laplace (Newton) Metropolis-Hastings refinement -------------------
     ## Pure Polya-Gamma draws move weakly-informed cells in tiny steps because
@@ -319,8 +356,8 @@
       mu_ <- bv[ia]
       ps_ <- if (has_c) bv[ips] else NULL
       e <- mu_ + (if (has_a) matrix(bv[ith], I, J) else 0) +
-                 (if (has_p) matrix(bv[iph], I, J, byrow = TRUE) else 0) +
-                 (if (has_c) matrix(ps_[cohidx], I, J) else 0) +
+                 (if (has_p) matrix(pe(bv[iph]), I, J, byrow = TRUE) else 0) +
+                 (if (has_c) matrix(ce(ps_)[cohidx], I, J) else 0) +
                  (if (het_a) matrix(bv[ith2], I, J) else 0) +
                  (if (het_p) matrix(bv[iph2], I, J, byrow = TRUE) else 0) +
                  (if (het_c) matrix(bv[ips2][cohidx], I, J) else 0) +
@@ -329,13 +366,18 @@
       rsy <- rowSums(ymnp); csy <- colSums(ymnp)
       cgy <- if (has_c || het_c) { cg <- numeric(K); ag <- rowsum(as.numeric(ymnp), cohv)
                                    cg[as.integer(rownames(ag))] <- ag; cg } else NULL
+      ## covariate: d eta_ij / d phi_j = cov_p[j], so the period score is x-scaled
+      ## (cohort symmetric); no-op when absent. The RW/iid prior terms use the
+      ## unscaled (relative) coefficient.
+      csy_s <- if (has_pcov) csy * cov_p else csy
+      cgy_s <- if (has_ccov) cgy * cov_c else cgy
       g <- numeric(P); g[ia] <- sum(ymnp)
-      if (has_a) g[ith] <- rsy - kappa  * as.numeric(sa$K %*% bv[ith])
-      if (has_p) g[iph] <- csy - lambda * as.numeric(sp$K %*% bv[iph])
-      if (has_c) g[ips] <- cgy - ny     * as.numeric(sc$K %*% ps_)
-      if (het_a) g[ith2] <- rsy - kappa2  * bv[ith2]     # iid prior gradient
-      if (het_p) g[iph2] <- csy - lambda2 * bv[iph2]
-      if (het_c) g[ips2] <- cgy - ny2     * bv[ips2]
+      if (has_a) g[ith] <- rsy   - kappa  * as.numeric(sa$K %*% bv[ith])
+      if (has_p) g[iph] <- csy_s - lambda * as.numeric(sp$K %*% bv[iph])
+      if (has_c) g[ips] <- cgy_s - ny     * as.numeric(sc$K %*% ps_)
+      if (het_a) g[ith2] <- rsy   - kappa2  * bv[ith2]     # iid prior gradient
+      if (het_p) g[iph2] <- csy_s - lambda2 * bv[iph2]
+      if (het_c) g[ips2] <- cgy_s - ny2     * bv[ips2]
       H <- assemble_prec(Wt, kappa, lambda, ny, kappa2, lambda2, ny2)
       diag(H) <- diag(H) + 1e-6 * mean(diag(H))
       Hg <- crossprod(Zbasis, H %*% Zbasis); gg <- as.numeric(crossprod(Zbasis, g))
@@ -374,7 +416,11 @@
       out_zeta[keep] <- zeta
       out_theta2[keep, ] <- theta2; out_phi2[keep, ] <- phi2; out_psi2[keep, ] <- psi2
       out_kap2[keep] <- kappa2; out_lam2[keep] <- lambda2; out_ny2[keep] <- ny2
-      eta <- mu + outer(theta, phi, "+") + matrix(psi[cohidx], I, J) +
+      ## fitted predictor for ksi/deviance: use the ABSOLUTE (covariate-scaled)
+      ## contribution pe(phi)/ce(psi), as in every other eta site (exact no-op
+      ## when no covariate). ksi -> fitted rates and out_dev -> DIC, so this must
+      ## include phi_j*cov_p[j] / psi_k*cov_c[k] for covariate models.
+      eta <- mu + outer(theta, pe(phi), "+") + matrix(ce(psi)[cohidx], I, J) +
              het_eta() + (if (has_od) delta_ij else 0)
       ksi_sum <- ksi_sum + eta; ksi_n <- ksi_n + 1L
       pr <- 1 / (1 + exp(-eta)); yhat <- N * pr
@@ -384,7 +430,13 @@
       out_dev[keep] <- sum(d2, na.rm = TRUE)
     }
   }
-  list(theta = out_theta, phi = out_phi, psi = out_psi,
+  ## store the ABSOLUTE (covariate-scaled) period/cohort effect: object$samples$
+  ## period/cohort then hold the contribution to the linear predictor, so
+  ## predict_apc adds it directly and plot.apc divides by the covariate to show
+  ## the relative coefficient. Bit-identical to the relative effect when absent.
+  list(theta = out_theta,
+       phi = if (has_pcov) sweep(out_phi, 2, cov_p, "*") else out_phi,
+       psi = if (has_ccov) sweep(out_psi, 2, cov_c, "*") else out_psi,
        kappa = out_kap, lambda = out_lam, ny = out_ny, my = out_mu,
        zeta = if (has_od) out_zeta else NULL,
        theta2 = if (het_a) out_theta2 else NULL,
@@ -402,11 +454,13 @@
                      n_iter, burn_in, thin, n_chains, parallel = FALSE,
                      prior_scale = TRUE, verbose = FALSE,
                      overdisp = FALSE, z_hyper = c(1, 0.05),
-                     het = c(FALSE, FALSE, FALSE)) {
+                     het = c(FALSE, FALSE, FALSE),
+                     cov_p = NULL, cov_c = NULL) {
   seeds <- sample.int(.Machine$integer.max, n_chains)
   runner <- function(s) .bamp_pg_chain(Y, N, ord_a, ord_p, ord_c, ppa, hyper,
                                        n_iter, burn_in, thin, s, prior_scale,
-                                       overdisp = overdisp, z_hyper = z_hyper, het = het)
+                                       overdisp = overdisp, z_hyper = z_hyper, het = het,
+                                       cov_p = cov_p, cov_c = cov_c)
   ## Honour a numeric `parallel` as the requested number of cores (matching the
   ## iwls path, where cores <- parallel); a bare TRUE means getOption('mc.cores').
   ## Capped at the number of chains. Previously cores were hard-capped at 2, so

@@ -24,8 +24,9 @@
 #' low acceptance and does not prune chains; it is markedly more robust for RW2
 #' priors and converges the high-population, rare-event cells of
 #' incidence/mortality data that the Gibbs step alone mixes only slowly. It
-#' currently supports plain RW1/RW2 models; heterogeneity, overdispersion and
-#' covariate models fall back to \code{"iwls"} with a warning. The Polya-Gamma
+#' natively supports all of the package's models -- RW1/RW2 priors,
+#' heterogeneity (\code{"rw1+het"}/\code{"rw2+het"}), overdispersion and
+#' period/cohort covariates -- with no fallback to \code{"iwls"}. The Polya-Gamma
 #' weights use a normal approximation that is essentially exact for the large
 #' population counts of incidence/mortality data, so it typically needs far
 #' fewer iterations than the default.
@@ -75,15 +76,9 @@ function(cases, population,
   output=apc()
   method <- match.arg(method)
 
-  ## The Polya-Gamma Gibbs engine supports plain RW1/RW2 priors, overdispersion
-  ## and heterogeneity; it falls back to IWLS for covariate models.
-  if (method == "pg") {
-    if (!is.null(period_covariate) || !is.null(cohort_covariate)) {
-      warning("method='pg' does not yet support covariates; using method='iwls'.",
-              call. = FALSE)
-      method <- "iwls"
-    }
-  }
+  ## The Polya-Gamma Gibbs engine natively supports plain RW1/RW2 priors,
+  ## overdispersion, heterogeneity and period/cohort covariates -- there is no
+  ## longer any model that falls back to IWLS.
 
   age_hyperpar_a=hyperpar$age[1]
   age_hyperpar_b=hyperpar$age[2]
@@ -349,7 +344,7 @@ function(cases, population,
 
   if(period_plus == 1){                                             # if period_plus = 1 (with period_covariate)
     cphi <- 0                                                     # set phi = 0
-    if(!is.vector(period_covariate))period_covariat<-as.vector(period_covariat)
+    if(!is.vector(period_covariate))period_covariate<-as.vector(period_covariate)
     if(period_start%%1 != 0 || period_start <= 0){
       stop("ERROR: Period start must be a positive integer!")     # period start must be a positive integer
     }else{
@@ -614,6 +609,10 @@ if (verbose)
                     age_het    = c(age_hyperpar_a2,    age_hyperpar_b2),
                     period_het = c(period_hyperpar_a2, period_hyperpar_b2),
                     cohort_het = c(cohort_hyperpar_a2, cohort_hyperpar_b2))
+   ## period/cohort covariate (mean-1 normalised above as period_data/cohort_data,
+   ## lengths J and K); the engine scales the smooth period/cohort effect by it.
+   cov_p <- if (period_plus == 1) as.numeric(period_data) else NULL
+   cov_c <- if (cohort_plus == 1) as.numeric(cohort_data) else NULL
    if (verbose) cat(paste0("Running Polya-Gamma Gibbs engine in ", chains, " chains.\n"))
    ## pass the raw `parallel` (logical or numeric core count) so .bamp_pg can use
    ## as many cores as the iwls path would (it caps internally at n_chains)
@@ -621,7 +620,7 @@ if (verbose)
                   hyper_pg, number_of_iterations, burn_in, step, chains,
                   parallel = parallel, prior_scale = prior_scale, verbose = verbose,
                   overdisp = (z_mode == 1), z_hyper = c(z_hyperpar_a, z_hyperpar_b),
-                  het = het_pg)
+                  het = het_pg, cov_p = cov_p, cov_c = cov_c)
    sumkick <- chains
    mkmat <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(r[[field]])))
    mkvec <- function(field) coda::as.mcmc.list(lapply(pg, function(r) coda::mcmc(matrix(r[[field]], ncol = 1))))

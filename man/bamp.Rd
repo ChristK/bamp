@@ -64,8 +64,9 @@ the true binomial likelihood. It has no Metropolis tuning, never restarts on
 low acceptance and does not prune chains; it is markedly more robust for RW2
 priors and converges the high-population, rare-event cells of
 incidence/mortality data that the Gibbs step alone mixes only slowly. It
-currently supports plain RW1/RW2 models; heterogeneity, overdispersion and
-covariate models fall back to \code{"iwls"} with a warning. The Polya-Gamma
+natively supports all of the package's models -- RW1/RW2 priors,
+heterogeneity (\code{"rw1+het"}/\code{"rw2+het"}), overdispersion and
+period/cohort covariates -- with no fallback to \code{"iwls"}. The Polya-Gamma
 weights use a normal approximation that is essentially exact for the large
 population counts of incidence/mortality data, so it typically needs far
 fewer iterations than the default.}
