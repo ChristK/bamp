@@ -241,3 +241,23 @@ expect_identical(mco$data$causes[1], "big")               # most prevalent fitte
 ppo <- predict_multicause(mco, periods = 1)
 expect_identical(ppo$causes, c("rare", "big", "mid"))     # original order reported
 expect_false(is.null(ppo$rare$rate))                      # access by name correct
+
+# coh-Sgt2: general S>2 strata; S=2 stays on the legacy path
+expect_true(is.null(f_iid$model$S))                       # S=2 legacy: no $S flag
+caL <- list(low = round(cases * .5), mid = round(cases * .3),
+            high = cases - round(cases * .5) - round(cases * .3))
+paL <- list(low = round(population * .5), mid = round(population * .3),
+            high = population - round(population * .5) - round(population * .3))
+f3 <- suppressMessages(bamp_coherent(caL, paL, periods_per_agegroup = ppa,
+                                     deviation = "ar1", rho = 0.6, mcmc = mh))
+expect_equal(f3$model$S, 3L)
+expect_equal(dim(f3$samples$d), c(length(f3$samples$mu0), 3L, nrow(cases)))
+expect_true(max(abs(apply(f3$samples$d, c(1, 3), sum))) < 1e-8)   # per-period sum_s d = 0
+fut3 <- function(P) rbind(P, P[rep(nrow(cases), 2), , drop = FALSE])
+p3 <- predict_coherent(f3, periods = 2, population = lapply(paL, fut3))
+expect_true(all(c("low", "mid", "high", "total") %in% names(p3)))
+np3 <- dim(p3$total$samples$rate)[1]
+rL <- p3$low$samples$rate[seq_len(np3), , ]; rM <- p3$mid$samples$rate[seq_len(np3), , ]
+rH <- p3$high$samples$rate[seq_len(np3), , ]
+expect_true(all(p3$total$samples$rate >= pmin(rL, rM, rH) - 1e-9 &
+                p3$total$samples$rate <= pmax(rL, rM, rH) + 1e-9))

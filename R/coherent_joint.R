@@ -57,18 +57,19 @@
 #' Joint sex-coherent age-period-cohort model (Phase 1 prototype)
 #'
 #' @description
-#' Fit two sexes in ONE joint posterior so that they borrow strength and -- unlike independent
-#' fits -- cannot diverge in projection. Shared period and cohort effects carry the common trend;
-#' a sex-specific period \emph{deviation} with a proper mean-reverting prior carries the
-#' (non-diverging) sex gap. This is the principled alternative to the Phase 0 \code{\link{bamp_strata}}
-#' total-plus-share wrapper; see \code{docs/coherent-forecasting.md}.
+#' Fit two or more exhaustive strata (e.g. sexes, or education levels) in ONE joint posterior so that
+#' they borrow strength and -- unlike independent fits -- cannot diverge in projection. Shared period
+#' and cohort effects carry the common trend; per-stratum \emph{deviations} with proper mean-reverting
+#' priors carry the (non-diverging) between-stratum gap. This is the principled alternative to the
+#' Phase 0 \code{\link{bamp_strata}} total-plus-share wrapper; see \code{docs/coherent-forecasting.md}.
 #'
-#' This is a research-grade REFERENCE implementation (dense one-block Polya-Gamma Gibbs, S = 2,
-#' period deviation only); it is correct but not optimised. For production use the design-note
-#' roadmap (sparse C engine, cohort deviation, S > 2).
+#' Research-grade REFERENCE implementation (dense one-block Polya-Gamma Gibbs; correct but not
+#' optimised -- port to a sparse C engine for production). \code{S = 2} additionally supports a
+#' sampled AR1 coefficient (\code{rho}) and a cohort-axis deviation (\code{deviation_cohort});
+#' \code{S >= 3} uses a contr.sum period deviation (\eqn{\sum_s d_{s,j}=0}).
 #'
-#' @param cases,population named lists of two \code{[periods x agegroups]} matrices (the two sexes),
-#'   same dimensions (as for \code{\link{bamp_strata}}).
+#' @param cases,population named lists of \code{S >= 2} \code{[periods x agegroups]} matrices (the
+#'   strata), same dimensions (as for \code{\link{bamp_strata}}).
 #' @param age,period,cohort each \code{"rw1"} or \code{"rw2"} (all three are required).
 #' @param periods_per_agegroup integer M linking the cohort index, as in \code{\link{bamp}}.
 #' @param deviation prior for the sex deviation: \code{"iid"} (ridge; instant reversion) or
@@ -112,10 +113,16 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
   if (!(is.numeric(rho_c) && length(rho_c) == 1 && rho_c >= 0 && rho_c < 1))
     stop("'rho_c' must satisfy 0 <= rho_c < 1.")
   use_dpsi <- deviation_cohort != "none"           # optional cohort-axis sex deviation
-  if (!is.list(cases) || length(cases) != 2L || !is.list(population) || length(population) != 2L)
-    stop("'cases' and 'population' must each be a list of two [periods x agegroups] matrices (the two sexes).")
-  if (is.null(names(cases))) names(cases) <- c("sex1", "sex2")
+  if (!is.list(cases) || !is.list(population) || length(cases) < 2L || length(cases) != length(population))
+    stop("'cases' and 'population' must be lists of the same length (>= 2) of [periods x agegroups] matrices.")
+  if (is.null(names(cases)))
+    names(cases) <- if (length(cases) == 2L) c("sex1", "sex2") else paste0("stratum", seq_along(cases))
   names(population) <- names(cases)
+  ## S = 2 keeps the full-featured legacy sampler below (sampled rho, cohort deviation).
+  ## S >= 3 dispatches to the general contr.sum period-deviation sampler.
+  if (length(cases) >= 3L)
+    return(.bamp_coherent_general(cases, population, age, period, cohort, periods_per_agegroup,
+                                  deviation, rho, mcmc, hyper, prior_scale, seed))
   ord_a <- .coh_ord(age); ord_p <- .coh_ord(period); ord_c <- .coh_ord(cohort)
 
   ## internal orientation: Y[[s]] is [age x period]  (engine convention)
@@ -295,6 +302,8 @@ predict_coherent <- function(object, periods = 0, population = NULL,
                              hazard = FALSE, period_length = 1) {
   if (!inherits(object, "apc_coherent")) stop("'object' must come from bamp_coherent().")
   hazard <- isTRUE(hazard)
+  if (!is.null(object$model$S) && object$model$S > 2L)
+    return(.predict_coherent_general(object, periods, population, quantiles, hazard, period_length))
   s <- object$samples; md <- object$model; dat <- object$data
   I <- dat$I; J <- dat$J; K <- dat$K; M <- dat$periods_per_agegroup
   ord_p <- md$ord[2]; ord_c <- md$ord[3]
@@ -343,5 +352,134 @@ predict_coherent <- function(object, periods = 0, population = NULL,
   out$total <- pack(rt)
   out$deviation <- list(samples = dev_ext, quantiles = apply(dev_ext, 1, stats::quantile, quantiles))
   out$order <- dat$strata
+  out
+}
+
+
+## ===========================================================================
+## General S >= 3 strata: shared phi/psi + per-stratum contr.sum period deviation
+## d_{s,j} (sum_s d_{s,j}=0 per period), proper AR1 prior (shared lambda_d, fixed
+## rho). This is a DIFFERENT model from the S=2 +/-delta legacy (which pins
+## sum_j delta=0); a_s is therefore only identified jointly with the deviation
+## mean -- report a_s + mean_j d_{s,j} as the stratum level. Sampled rho and the
+## cohort deviation are S=2-only for now. (See docs/hardening-plan.md, coh-Sgt2.)
+## ===========================================================================
+.bamp_coherent_general <- function(cases, population, age, period, cohort, ppa_arg,
+                                   deviation, rho, mcmc, hyper, prior_scale, seed) {
+  ord_a <- .coh_ord(age); ord_p <- .coh_ord(period); ord_c <- .coh_ord(cohort)
+  S <- length(cases)
+  Y <- lapply(cases, function(x) t(as.matrix(x)))
+  Npop <- lapply(population, function(x) t(as.matrix(x)))
+  I <- nrow(Y[[1]]); J <- ncol(Y[[1]]); M <- as.integer(ppa_arg); K <- M * (I - 1L) + J
+  if (deviation == "ar1" && rho > 0.9)
+    warning("bamp_coherent: rho > 0.9 barely penalises the common stratum shift; a_s vs deviation-mean will mix poorly. Consider rho <= 0.9.")
+  scl <- function(Km, ord) if (prior_scale) Km * .pg_scale(Km, ord) else Km
+  Ka <- scl(.pg_Kmat(I, ord_a), ord_a); Kp <- scl(.pg_Kmat(J, ord_p), ord_p); Kc <- scl(.pg_Kmat(K, ord_c), ord_c)
+  Td <- .ar1_prec(J, rho)
+
+  ## layout: mu0, a[S], theta[[s]][I], phi[J], psi[K], d[[s]][J]
+  i_mu <- 1L; i_a <- 1L + seq_len(S); base <- 1L + S
+  i_th <- lapply(seq_len(S), function(s) base + (s - 1L) * I + seq_len(I)); base <- base + S * I
+  i_ph <- base + seq_len(J); base <- base + J
+  i_ps <- base + seq_len(K); base <- base + K
+  i_d  <- lapply(seq_len(S), function(s) base + (s - 1L) * J + seq_len(J)); P <- base + S * J
+
+  grid <- expand.grid(j = 1:J, i = 1:I, s = 1:S); n <- nrow(grid); kcell <- (I - grid$i) * M + grid$j
+  X <- matrix(0, n, P); X[, i_mu] <- 1
+  X[cbind(seq_len(n), i_a[grid$s])] <- 1
+  X[cbind(seq_len(n), vapply(seq_len(n), function(r) i_th[[grid$s[r]]][grid$i[r]], 1L))] <- 1
+  X[cbind(seq_len(n), i_ph[grid$j])] <- 1
+  X[cbind(seq_len(n), i_ps[kcell])] <- 1
+  X[cbind(seq_len(n), vapply(seq_len(n), function(r) i_d[[grid$s[r]]][grid$j[r]], 1L))] <- 1   # +1, constraint makes the contrast
+  yv <- Nv <- numeric(n)
+  for (s in seq_len(S)) { sel <- grid$s == s
+    yv[sel] <- Y[[s]][cbind(grid$i[sel], grid$j[sel])]; Nv[sel] <- Npop[[s]][cbind(grid$i[sel], grid$j[sel])] }
+  Xt <- t(X); bvec <- as.numeric(Xt %*% (yv - Nv / 2))
+
+  mkrow <- function(idx, val) { r <- numeric(P); r[idx] <- val; r }
+  Arows <- list(mkrow(i_a, 1))
+  for (s in seq_len(S)) Arows <- c(Arows, list(mkrow(i_th[[s]], 1)))
+  Arows <- c(Arows, list(mkrow(i_ph, 1), mkrow(i_ps, 1)))
+  for (j in seq_len(J)) Arows <- c(Arows, list(mkrow(vapply(seq_len(S), function(s) i_d[[s]][j], 1L), 1)))  # sum_s d_{s,j}=0
+  if (ord_p == 2L) Arows <- c(Arows, list(mkrow(i_ph, (1:J) - mean(1:J))))
+  A <- do.call(rbind, Arows); tA <- t(A)
+
+  hp <- function(x) if (is.null(x)) c(1, 1) else x
+  ha <- hp(hyper$age); hpp <- hp(hyper$period); hc <- hp(hyper$cohort); hd <- hp(hyper$dev); tau_a <- 1e-2
+  build_prec <- function(kth, lph, nps, ld) {
+    Pm <- matrix(0, P, P); Pm[i_mu, i_mu] <- 1e-6; Pm[cbind(i_a, i_a)] <- tau_a
+    for (s in seq_len(S)) { Pm[i_th[[s]], i_th[[s]]] <- kth * Ka; Pm[i_d[[s]], i_d[[s]]] <- ld * Td }
+    Pm[i_ph, i_ph] <- lph * Kp; Pm[i_ps, i_ps] <- nps * Kc
+    diag(Pm) <- diag(Pm) + 1e-7; Pm
+  }
+  set.seed(seed)
+  p0 <- sum(yv) / sum(Nv); beta <- numeric(P); beta[i_mu] <- log(p0 / (1 - p0))
+  kth <- lph <- nps <- ld <- 1; Prec <- build_prec(kth, lph, nps, ld)
+  iters <- mcmc$iterations; burn <- mcmc$burn_in; thin <- mcmc$thin
+  keep <- seq.int(burn + thin, iters, by = thin); nkeep <- length(keep); st <- 0L
+  out <- list(mu0 = numeric(nkeep), a = matrix(0, nkeep, S), theta = array(0, c(nkeep, S, I)),
+              phi = matrix(0, nkeep, J), psi = matrix(0, nkeep, K), d = array(0, c(nkeep, S, J)),
+              lambda_phi = numeric(nkeep), nu_psi = numeric(nkeep),
+              lambda_d = numeric(nkeep), kappa_theta = numeric(nkeep))
+  qform <- function(v, Km) sum(v * (Km %*% v))
+  for (it in seq_len(iters)) {
+    eta <- as.numeric(X %*% beta); omega <- .pg_rpg(Nv, eta)
+    Q <- Xt %*% (X * omega) + Prec; beta <- .pg_draw_block(Q, bvec, A, tA)
+    th_q <- sum(vapply(seq_len(S), function(s) qform(beta[i_th[[s]]], Ka), 0))
+    d_q  <- sum(vapply(seq_len(S), function(s) qform(beta[i_d[[s]]], Td), 0))
+    kth <- rgamma(1, ha[1]  + S * (I - ord_a) / 2, ha[2]  + 0.5 * th_q)
+    lph <- rgamma(1, hpp[1] + (J - ord_p) / 2,     hpp[2] + 0.5 * qform(beta[i_ph], Kp))
+    nps <- rgamma(1, hc[1]  + (K - ord_c) / 2,     hc[2]  + 0.5 * qform(beta[i_ps], Kc))
+    ld  <- rgamma(1, hd[1]  + (S - 1) * J / 2,      hd[2]  + 0.5 * d_q)
+    Prec <- build_prec(kth, lph, nps, ld)
+    if (it %in% keep) { st <- st + 1L
+      out$mu0[st] <- beta[i_mu]; out$a[st, ] <- beta[i_a]
+      for (s in seq_len(S)) { out$theta[st, s, ] <- beta[i_th[[s]]]; out$d[st, s, ] <- beta[i_d[[s]]] }
+      out$phi[st, ] <- beta[i_ph]; out$psi[st, ] <- beta[i_ps]
+      out$lambda_phi[st] <- lph; out$nu_psi[st] <- nps; out$lambda_d[st] <- ld; out$kappa_theta[st] <- kth
+    }
+  }
+  structure(list(samples = out,
+    model = list(age = age, period = period, cohort = cohort, deviation = deviation,
+                 rho = rho, S = S, ord = c(ord_a, ord_p, ord_c)),
+    data = list(cases = cases, population = population, periods_per_agegroup = M,
+                I = I, J = J, K = K, strata = names(cases))), class = "apc_coherent")
+}
+
+.predict_coherent_general <- function(object, periods, population, quantiles, hazard, period_length) {
+  s <- object$samples; md <- object$model; dat <- object$data
+  I <- dat$I; J <- dat$J; K <- dat$K; M <- dat$periods_per_agegroup; S <- md$S
+  ord_p <- md$ord[2]; ord_c <- md$ord[3]; rho <- md$rho
+  n1 <- J; n2 <- J + periods; K2 <- (I - 1) * M + n2; D <- length(s$mu0); strata <- dat$strata
+  rate <- lapply(seq_len(S), function(x) array(0, c(n2, I, D)))
+  for (d in seq_len(D)) {
+    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2)
+    ps <- .cj_predict_rw(c(s$psi[d, ], numeric(K2 - K)),  s$nu_psi[d],    ord_c, K, K2)
+    ## per-stratum AR1 projection, then RE-CENTER per period so sum_s d_{s,j}=0 (no common-mode drift)
+    dmat <- vapply(seq_len(S), function(st)
+      .cj_predict_ar(c(s$d[d, st, ], numeric(n2 - n1)), s$lambda_d[d], rho, n1, n2), numeric(n2))  # [n2 x S]
+    dmat <- dmat - rowMeans(dmat)
+    for (i in 1:I) {
+      kk <- (I - i) * M + (1:n2); base <- s$mu0[d] + ph + ps[kk]
+      for (st in seq_len(S))
+        rate[[st]][, i, d] <- 1 / (1 + exp(-(base + s$a[d, st] + s$theta[d, st, i] + dmat[, st])))
+    }
+  }
+  if (is.null(population)) pop <- lapply(dat$population, as.matrix)
+  else {
+    if (!all(strata %in% names(population))) stop("'population' must be a named list with every stratum.")
+    pop <- lapply(strata, function(nm) as.matrix(population[[nm]]))
+  }
+  np <- min(min(vapply(pop, nrow, 1L)), n2)
+  qf <- function(arr) apply(arr, 1:2, stats::quantile, quantiles)
+  pack <- function(rt) { e <- list(rate = qf(rt), samples = list(rate = rt))
+    if (hazard) { hz <- -log1p(-pmin(pmax(rt, 0), 1 - 1e-10)) / period_length; e$hazard <- qf(hz); e$samples$hazard <- hz }; e }
+  out <- stats::setNames(lapply(rate, pack), strata)
+  wsum <- Reduce(`+`, lapply(seq_len(S), function(st) pop[[st]][seq_len(np), , drop = FALSE]))
+  num <- Reduce(`+`, lapply(seq_len(S), function(st) {
+    w <- pop[[st]][seq_len(np), , drop = FALSE]
+    array(apply(rate[[st]][seq_len(np), , , drop = FALSE], 3, function(r) w * r), c(np, I, D)) }))
+  rt_tot <- num / as.vector(wsum); rt_tot[!is.finite(rt_tot)] <- 0
+  out$total <- pack(rt_tot); out$order <- strata
   out
 }

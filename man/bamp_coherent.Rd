@@ -24,8 +24,8 @@ bamp_coherent(
 )
 }
 \arguments{
-\item{cases, population}{named lists of two \code{[periods x agegroups]} matrices (the two sexes),
-same dimensions (as for \code{\link{bamp_strata}}).}
+\item{cases, population}{named lists of \code{S >= 2} \code{[periods x agegroups]} matrices (the
+strata), same dimensions (as for \code{\link{bamp_strata}}).}
 
 \item{age, period, cohort}{each \code{"rw1"} or \code{"rw2"} (all three are required).}
 
@@ -63,15 +63,16 @@ object of class \code{apc_coherent}: posterior draws of all effects and precisio
   the model/data metadata, needed by \code{\link{predict_coherent}}.
 }
 \description{
-Fit two sexes in ONE joint posterior so that they borrow strength and -- unlike independent
-fits -- cannot diverge in projection. Shared period and cohort effects carry the common trend;
-a sex-specific period \emph{deviation} with a proper mean-reverting prior carries the
-(non-diverging) sex gap. This is the principled alternative to the Phase 0 \code{\link{bamp_strata}}
-total-plus-share wrapper; see \code{docs/coherent-forecasting.md}.
+Fit two or more exhaustive strata (e.g. sexes, or education levels) in ONE joint posterior so that
+they borrow strength and -- unlike independent fits -- cannot diverge in projection. Shared period
+and cohort effects carry the common trend; per-stratum \emph{deviations} with proper mean-reverting
+priors carry the (non-diverging) between-stratum gap. This is the principled alternative to the
+Phase 0 \code{\link{bamp_strata}} total-plus-share wrapper; see \code{docs/coherent-forecasting.md}.
 
-This is a research-grade REFERENCE implementation (dense one-block Polya-Gamma Gibbs, S = 2,
-period deviation only); it is correct but not optimised. For production use the design-note
-roadmap (sparse C engine, cohort deviation, S > 2).
+Research-grade REFERENCE implementation (dense one-block Polya-Gamma Gibbs; correct but not
+optimised -- port to a sparse C engine for production). \code{S = 2} additionally supports a
+sampled AR1 coefficient (\code{rho}) and a cohort-axis deviation (\code{deviation_cohort});
+\code{S >= 3} uses a contr.sum period deviation (\eqn{\sum_s d_{s,j}=0}).
 }
 \seealso{
 \code{\link{predict_coherent}}, \code{\link{bamp_strata}}, \code{\link{bamp}}
