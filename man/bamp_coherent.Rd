@@ -20,7 +20,8 @@ bamp_coherent(
     0.05), rho = c(1, 1), dev_cohort = c(1, 0.05)),
   prior_scale = TRUE,
   seed = 1,
-  mh_sd_rho = 0.3
+  mh_sd_rho = 0.3,
+  adapt_rho = TRUE
 )
 }
 \arguments{
@@ -56,7 +57,12 @@ sum-to-zero over cohorts.}
 
 \item{seed}{RNG seed.}
 
-\item{mh_sd_rho}{proposal standard deviation (logit scale) for the Metropolis update of \code{rho}.}
+\item{mh_sd_rho}{proposal standard deviation (logit scale) for the Metropolis update of \code{rho};
+the starting value when \code{adapt_rho = TRUE}.}
+
+\item{adapt_rho}{if \code{TRUE} (default), Robbins-Monro adaptation tunes the \code{rho} proposal sd
+toward 0.234 acceptance during burn-in only (the sampling-phase kernel is then fixed, preserving
+detailed balance). The tuned value is returned in \code{model$mh_sd_rho}.}
 }
 \value{
 object of class \code{apc_coherent}: posterior draws of all effects and precisions,

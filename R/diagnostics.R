@@ -32,13 +32,28 @@
   B <- n * stats::var(means)
   sqrt(((n - 1) / n * W + B / n) / W)
 }
-.diag_rhat_ess <- function(x) {                           # rank-normalised split-Rhat + bulk ESS
-  x <- x[is.finite(x)]
-  if (length(x) < 4L || stats::var(x) <= 0) return(c(rhat = NA_real_, ess = NA_real_))
-  ch <- .diag_split_halves(x); n <- length(ch[[1]])
-  z <- .diag_zscale(c(ch[[1]], ch[[2]]))                  # rank-normalise the POOLED split draws
-  rhat <- .diag_rhat_from_chains(list(z[seq_len(n)], z[(n + 1L):(2L * n)]))
-  ess <- tryCatch(as.numeric(coda::effectiveSize(x)), error = function(e) NA_real_)
+## rank-normalised split-Rhat + bulk ESS. `mat` is a vector (one chain, split in
+## half) or an [n x C] matrix (C chains -> true between-chain Rhat, each split in half).
+.diag_rhat_ess <- function(mat) {
+  if (is.null(dim(mat))) mat <- matrix(mat, ncol = 1L)
+  subch <- list()
+  for (c in seq_len(ncol(mat))) {                         # split each chain into 2 halves
+    x <- mat[, c]; x <- x[is.finite(x)]; h <- length(x) %/% 2L
+    if (h < 2L) next
+    subch[[length(subch) + 1L]] <- x[seq_len(h)]
+    subch[[length(subch) + 1L]] <- x[(length(x) - h + 1L):length(x)]
+  }
+  if (length(subch) < 2L) return(c(rhat = NA_real_, ess = NA_real_))
+  n <- min(vapply(subch, length, integer(1)))
+  subch <- lapply(subch, function(s) s[seq_len(n)])
+  pooled <- unlist(subch)
+  if (stats::var(pooled) <= 0) return(c(rhat = NA_real_, ess = NA_real_))
+  z <- .diag_zscale(pooled)                               # rank-normalise across all split chains
+  zch <- split(z, rep(seq_along(subch), each = n))
+  rhat <- .diag_rhat_from_chains(zch)
+  ess <- tryCatch(sum(vapply(seq_len(ncol(mat)),
+           function(c) as.numeric(coda::effectiveSize(mat[, c])), numeric(1))),
+           error = function(e) NA_real_)
   c(rhat = rhat, ess = ess)
 }
 
@@ -106,17 +121,34 @@
 #' @seealso \code{\link{bamp_traceplot}}, \code{\link{calibration}}
 #' @export
 bamp_diagnostics <- function(fit, rhat_max = 1.01, ess_min = 400, top = 10) {
-  blocks <- .diag_collect(fit)
-  if (!length(blocks)) stop("no fit-level $samples found; is this a fitted bamp object?")
   rows <- list()
-  for (bn in names(blocks)) {
-    M <- .diag_param_matrix(blocks[[bn]])
-    if (is.null(M)) next
-    re <- t(apply(M, 2, .diag_rhat_ess))
-    rows[[bn]] <- data.frame(block = bn, parameter = colnames(M),
-                             rhat = re[, "rhat"], ess = re[, "ess"],
-                             stringsAsFactors = FALSE)
+  if (inherits(fit, "bamp_multichain")) {                 # D2: true between-chain Rhat
+    cblocks <- lapply(fit$chains, .diag_collect)
+    for (bn in names(cblocks[[1]])) {
+      Ms <- lapply(cblocks, function(cb) .diag_param_matrix(cb[[bn]]))
+      Ms <- Filter(Negate(is.null), Ms)
+      if (length(Ms) < 1L) next
+      pars <- colnames(Ms[[1]]); ncol1 <- length(pars)
+      re <- t(vapply(seq_len(ncol1), function(j) {
+        mat <- vapply(Ms, function(M) M[, j], numeric(nrow(Ms[[1]])))   # nkeep x chains
+        .diag_rhat_ess(mat)
+      }, numeric(2)))
+      rows[[bn]] <- data.frame(block = bn, parameter = pars,
+                               rhat = re[, 1], ess = re[, 2], stringsAsFactors = FALSE)
+    }
+  } else {
+    blocks <- .diag_collect(fit)
+    if (!length(blocks)) stop("no fit-level $samples found; is this a fitted bamp object?")
+    for (bn in names(blocks)) {
+      M <- .diag_param_matrix(blocks[[bn]])
+      if (is.null(M)) next
+      re <- t(apply(M, 2, .diag_rhat_ess))
+      rows[[bn]] <- data.frame(block = bn, parameter = colnames(M),
+                               rhat = re[, "rhat"], ess = re[, "ess"],
+                               stringsAsFactors = FALSE)
+    }
   }
+  if (!length(rows)) stop("no fit-level $samples found; is this a fitted bamp object?")
   by_param <- do.call(rbind, rows); rownames(by_param) <- NULL
   by_param$flagged <- (is.finite(by_param$rhat) & by_param$rhat > rhat_max) |
                       (is.finite(by_param$ess)  & by_param$ess  < ess_min)

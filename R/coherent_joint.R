@@ -89,7 +89,11 @@
 #' @param prior_scale scale intrinsic structure matrices to unit generalised variance
 #'   (Sorbye-Rue), as in the main engine.
 #' @param seed RNG seed.
-#' @param mh_sd_rho proposal standard deviation (logit scale) for the Metropolis update of \code{rho}.
+#' @param mh_sd_rho proposal standard deviation (logit scale) for the Metropolis update of \code{rho};
+#'   the starting value when \code{adapt_rho = TRUE}.
+#' @param adapt_rho if \code{TRUE} (default), Robbins-Monro adaptation tunes the \code{rho} proposal sd
+#'   toward 0.234 acceptance during burn-in only (the sampling-phase kernel is then fixed, preserving
+#'   detailed balance). The tuned value is returned in \code{model$mh_sd_rho}.
 #'
 #' @return object of class \code{apc_coherent}: posterior draws of all effects and precisions,
 #'   the model/data metadata, needed by \code{\link{predict_coherent}}.
@@ -103,7 +107,7 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
                           hyper = list(age = c(1, 0.5), period = c(1, 5e-4),
                                        cohort = c(1, 5e-4), dev = c(1, 0.05), rho = c(1, 1),
                                        dev_cohort = c(1, 0.05)),
-                          prior_scale = TRUE, seed = 1, mh_sd_rho = 0.3) {
+                          prior_scale = TRUE, seed = 1, mh_sd_rho = 0.3, adapt_rho = TRUE) {
   deviation <- match.arg(deviation)
   if (deviation == "iid") rho <- 0
   if (!(is.numeric(rho) && length(rho) == 1 && rho >= 0 && rho < 1))
@@ -224,6 +228,10 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
 
   qform <- function(v, Km) sum(v * (Km %*% v))
   n_acc <- 0L
+  ## D5: Robbins-Monro adaptation of the logit-RW proposal sd toward 0.234 acceptance,
+  ## active only during burn-in (diminishing adaptation -> the sampling-phase kernel is
+  ## fixed, so detailed balance holds for the retained draws).
+  mh_sd <- mh_sd_rho; lsd <- log(mh_sd_rho); target <- 0.234
   for (it in seq_len(iters)) {
     eta <- as.numeric(X %*% beta)
     omega <- .pg_rpg(Nv, eta)
@@ -239,13 +247,18 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
     ## sample rho (ar1 only): logit-RW Metropolis with the constrained determinant.
     ## Td is refreshed at loop scope so the next build_prec() sees the accepted value.
     if (sample_rho) {
-      rho_star <- plogis(qlogis(rho_cur) + rnorm(1, 0, mh_sd_rho))
+      rho_star <- plogis(qlogis(rho_cur) + rnorm(1, 0, mh_sd))
       Td_star <- .ar1_prec(J, rho_star)
       logr <- 0.5 * (ld_constr(rho_star) - ld_constr(rho_cur)) -
               0.5 * ld * (qform(de, Td_star) - qform(de, Td)) +
               (dbeta(rho_star, hr[1], hr[2], log = TRUE) - dbeta(rho_cur, hr[1], hr[2], log = TRUE)) +
               (log(rho_star * (1 - rho_star)) - log(rho_cur * (1 - rho_cur)))
-      if (is.finite(logr) && log(runif(1)) < logr) { rho_cur <- rho_star; Td <- Td_star; n_acc <- n_acc + 1L }
+      acc <- is.finite(logr) && log(runif(1)) < logr
+      if (acc) { rho_cur <- rho_star; Td <- Td_star; n_acc <- n_acc + 1L }
+      if (adapt_rho && it <= burn) {                       # diminishing RM step, burn-in only
+        lsd <- lsd + min(0.5, 5 / it) * ((if (acc) 1 else 0) - target)
+        mh_sd <- exp(max(-8, min(2, lsd)))                 # clamp to a sane sd range
+      }
     }
     if (use_dpsi) { dpsi <- beta[i_dc]; ldc <- rgamma(1, hdc[1] + (K - 1) / 2, hdc[2] + 0.5 * qform(dpsi, Tc)) }
     Prec <- build_prec(kth, lph, nps, ld, ldc)
@@ -266,6 +279,7 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
     model = list(age = age, period = period, cohort = cohort,
                  deviation = deviation, rho = rho, rho_sampled = sample_rho,
                  rho_accept = if (sample_rho) n_acc / iters else NA_real_,
+                 mh_sd_rho = mh_sd, mh_sd_rho_adapted = isTRUE(adapt_rho && sample_rho),
                  deviation_cohort = deviation_cohort, rho_c = rho_c, use_dpsi = use_dpsi,
                  ord = c(ord_a, ord_p, ord_c)),
     data = list(cases = cases, population = population, periods_per_agegroup = M,

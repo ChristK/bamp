@@ -44,10 +44,10 @@ Tick `[x]` the items you want implemented, then tell me (or just say the IDs, e.
 
 ## D. Sampler diagnostics / robustness  *(running 30 diseases × strata)*
 - [x] **D1** R-hat / ESS reported in coherent / multicause / cascade (none today) — S — ✅ shipped (bamp_diagnostics)
-- [x] **D2** Multi-chain support + parallel chains — M
+- [x] **D2** Multi-chain support + parallel chains — M — ✅ shipped (run_chains/combine_chains, between-chain Rhat)
 - [x] **D3** Automated non-convergence flagging across many fits — S — ✅ shipped (convergence_report)
 - [x] **D4** Trace / diagnostic plots for the new samplers — S — ✅ shipped (bamp_traceplot)
-- [x] **D5** Adaptive tuning of the ρ Metropolis step size — S
+- [x] **D5** Adaptive tuning of the ρ Metropolis step size — S — ✅ shipped (adapt_rho, Robbins-Monro)
 - [x] **D6** Rare-disease / zero-cell leaf-share stress test — S — ✅ shipped (test_backtest)
 
 ## E. External integration / outputs  *(handoff to IMPACTncd)*
