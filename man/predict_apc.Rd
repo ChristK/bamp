@@ -11,7 +11,9 @@ predict_apc(
   quantiles = c(0.05, 0.5, 0.95),
   update = FALSE,
   hazard = FALSE,
-  period_length = 1
+  period_length = 1,
+  damping = 1,
+  var_damping = 1
 )
 }
 \arguments{
@@ -31,7 +33,17 @@ across competing causes, so these are the quantity to feed to a competing-risk l
 microsimulation (see Details).}
 
 \item{period_length}{single positive number: the length of one period in the time units you want
-the hazard expressed per (e.g. years per period). Default 1 returns the cumulative hazard per period.
+the hazard expressed per (e.g. years per period). Default 1 returns the cumulative hazard per period.}
+
+\item{damping}{trend-damping factor in \[0,1\] for the RW2 drift when extrapolating future period/
+cohort effects: each future increment is \code{damping} times the previous one (Gardner-McKenzie
+damped trend). \code{1} (default) is the usual linear RW2 continuation; \code{0} collapses to a flat
+RW1-style forecast; intermediate values curb long-horizon over-extrapolation. No effect on RW1 point
+forecasts.}
+
+\item{var_damping}{innovation-variance shrinkage in (0,1\]: the per-step forecast innovation sd is
+multiplied by \code{var_damping^(h-1)} at horizon \code{h}, so predictive bands stop fanning out
+without bound. \code{1} (default) leaves the bands unchanged.
 Only used when \code{hazard=TRUE}.}
 }
 \value{

@@ -10,7 +10,9 @@ predict_multicause(
   population = NULL,
   quantiles = c(0.05, 0.5, 0.95),
   hazard = FALSE,
-  period_length = 1
+  period_length = 1,
+  damping = 1,
+  var_damping = 1
 )
 }
 \arguments{
@@ -25,6 +27,11 @@ predict_multicause(
 
 \item{hazard, period_length}{if \code{hazard=TRUE} also return cause-specific additive hazards
 \code{share x (-log(1-total_rate)/period_length)} (they sum to the all-cause hazard).}
+
+\item{damping, var_damping}{trend-damping and innovation-variance shrinkage for the forecast
+extrapolation (the all-cause total \emph{and} the cause shares), as in \code{\link{predict_apc}}.
+Defaults \code{1, 1} reproduce the free random walk; \code{damping < 1} curbs long-horizon
+over-extrapolation, \code{var_damping < 1} stops the predictive bands fanning out without bound.}
 }
 \value{
 list with one entry per cause and a \code{total} entry (quantiles of \code{rate}, and

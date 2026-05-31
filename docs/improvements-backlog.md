@@ -17,9 +17,9 @@ Tick `[x]` the items you want implemented, then tell me (or just say the IDs, e.
 ---
 
 ## A. Trend / forecast realism  *(what the projection actually does at the horizon)*
-- [x] **A1** Optional damped-drift / mean-reverting RW2 on the shared trend (vs flat RW1 or un-damped linear RW2) — S/M — **high** at 20–30y
-- [x] **A2** Per-effect RW-order selection with guidance / score-based auto-choice — S
-- [x] **A3** Long-horizon drift-uncertainty shrinkage (stop bands exploding) — S
+- [x] **A1** Optional damped-drift / mean-reverting RW2 on the shared trend (vs flat RW1 or un-damped linear RW2) — S/M — **high** at 20–30y — ✅ shipped (damping= in predict_*)
+- [x] **A2** Per-effect RW-order selection with guidance / score-based auto-choice — S — ✅ shipped (select_rw_order)
+- [x] **A3** Long-horizon drift-uncertainty shrinkage (stop bands exploding) — S — ✅ shipped (var_damping= in predict_*)
 - [x] **A4** Age-specific period drift (relax the single shared period so ages can diverge) — M
 - [x] **A5** Changepoint / structural-break period trend — L
 - [ ] **A6** Oldest-old / open-ended top age-group handling — M

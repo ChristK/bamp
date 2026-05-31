@@ -11,6 +11,14 @@
 #' microsimulation (see Details).
 #' @param period_length single positive number: the length of one period in the time units you want
 #' the hazard expressed per (e.g. years per period). Default 1 returns the cumulative hazard per period.
+#' @param damping trend-damping factor in \[0,1\] for the RW2 drift when extrapolating future period/
+#' cohort effects: each future increment is \code{damping} times the previous one (Gardner-McKenzie
+#' damped trend). \code{1} (default) is the usual linear RW2 continuation; \code{0} collapses to a flat
+#' RW1-style forecast; intermediate values curb long-horizon over-extrapolation. No effect on RW1 point
+#' forecasts.
+#' @param var_damping innovation-variance shrinkage in (0,1\]: the per-step forecast innovation sd is
+#' multiplied by \code{var_damping^(h-1)} at horizon \code{h}, so predictive bands stop fanning out
+#' without bound. \code{1} (default) leaves the bands unchanged.
 #' Only used when \code{hazard=TRUE}.
 #'
 #' @description Prediction of rates and, if possible, cases from the Bayesian age-period-cohort model
@@ -50,7 +58,9 @@
 #' pred <- predict_apc(model, periods=1)
 #' plot(pred$pr[2,11,], main="Predicted rate per agegroup", ylab="p")
 #' }
-predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0.95), update=FALSE, hazard=FALSE, period_length=1){
+predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0.95), update=FALSE, hazard=FALSE, period_length=1, damping=1, var_damping=1){
+  if (!(is.numeric(damping) && length(damping)==1L && damping>=0 && damping<=1)) stop("'damping' must be in [0, 1].")
+  if (!(is.numeric(var_damping) && length(var_damping)==1L && var_damping>0 && var_damping<=1)) stop("'var_damping' must be in (0, 1].")
   ksi_prognose <-
     function(prepi, vdb, noa, nop, nop2, noc, zmode){
       my<-prepi[1]
@@ -74,23 +84,25 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     }
   
   predict_rw <-
-    function(prepi, rw, n1, n2){
+    function(prepi, rw, n1, n2, damp=1, vdamp=1){
       lambda<-prepi[1]
       phi<-prepi[-1]
       # nothing to extrapolate when there are no future steps (n2==n1). Guard the
       # (n1+1):n2 loops: R's `:` counts DOWN when n2<n1+1, so (n1+1):n1 would be
       # c(n1+1, n1) and wrongly append/overwrite a step. This matters for
       # predict_apc(periods=0) (retrospective model checking), where n2==n1.
+      # damp (A1) damps the RW2 drift; vdamp (A3) shrinks the per-step innovation
+      # sd geometrically. damp=1, vdamp=1 reproduce the free random walk exactly.
       if(n2 > n1){
         if(rw == 1){
           for(i in (n1+1):n2){
-            phi[i] <- (rnorm(1, mean = 0, sd = 1)/sqrt(lambda)) + phi[i-1]
+            phi[i] <- (rnorm(1, mean = 0, sd = 1)/sqrt(lambda))*vdamp^(i-n1-1) + phi[i-1]
           }
         }
 
         if(rw == 2){
           for(i in (n1+1):n2){
-            phi[i] <- (rnorm(1, mean = 0, sd = 1)/sqrt(lambda)) + (2*phi[i-1] - phi[i-2])
+            phi[i] <- (rnorm(1, mean = 0, sd = 1)/sqrt(lambda))*vdamp^(i-n1-1) + phi[i-1] + damp*(phi[i-1] - phi[i-2])
           }
         }
 
@@ -123,7 +135,7 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     )
     ch<-length(object$samples$period)
       prep<-parallel::mclapply(1:ch, function(i,samples)cbind(object$samples$period_parameter[[i]],object$samples$period[[i]]), samples)
-      phi<-parallel::mclapply(prep, function(prepi, rw, n1, n2){t(apply(prepi, 1, predict_rw, rw, n1, n2))}, rwp, n1, n2)
+      phi<-parallel::mclapply(prep, function(prepi, rw, n1, n2, damp, vdamp){t(apply(prepi, 1, predict_rw, rw, n1, n2, damp, vdamp))}, rwp, n1, n2, damping, var_damping)
   }
   
   if (!object$model$cohort=="")
@@ -136,7 +148,7 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     c2<-bamp::coh(1,n2,a1,object$data$periods_per_agegroup)
     ch<-length(object$samples$cohort)
       prep<-parallel::mclapply(1:ch, function(i,samples)cbind(object$samples$cohort_parameter[[i]],object$samples$cohort[[i]]), samples)
-      psi<-parallel::mclapply(prep, function(prepi, rw, n1, n2){t(apply(prepi, 1, predict_rw, rw, n1, n2))}, rwc, c1, c2)
+      psi<-parallel::mclapply(prep, function(prepi, rw, n1, n2, damp, vdamp){t(apply(prepi, 1, predict_rw, rw, n1, n2, damp, vdamp))}, rwc, c1, c2, damping, var_damping)
   }
     
   nr.samples<-length(object$samples$intercept[[1]])

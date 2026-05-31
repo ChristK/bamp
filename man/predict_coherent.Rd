@@ -10,7 +10,9 @@ predict_coherent(
   population = NULL,
   quantiles = c(0.05, 0.5, 0.95),
   hazard = FALSE,
-  period_length = 1
+  period_length = 1,
+  damping = 1,
+  var_damping = 1
 )
 }
 \arguments{
@@ -26,6 +28,10 @@ in-sample populations (model checking only).}
 
 \item{hazard, period_length}{as in \code{\link{predict_apc}}: if \code{hazard=TRUE} also return the
 per-stratum cumulative hazard \eqn{-\log(1-\mathrm{rate})/\mathrm{period\_length}}.}
+
+\item{damping, var_damping}{trend-damping and innovation-variance shrinkage for the shared period/
+cohort extrapolation, as in \code{\link{predict_apc}}. Defaults \code{1, 1} reproduce the free
+random walk. The mean-reverting sex deviation is unaffected (it already reverts via \code{rho}).}
 }
 \value{
 list with one entry per sex and a \code{total} entry (quantiles of \code{rate}, and

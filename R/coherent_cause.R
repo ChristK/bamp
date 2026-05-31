@@ -28,14 +28,15 @@
 ## multivariate random-walk extrapolation of the C-cause period field with
 ## Omega-correlated innovations (this is what carries cross-cause dependence
 ## into the forecast).
-.mvrw_predict <- function(Phi, Omega, rw, n1, n2) {
+.mvrw_predict <- function(Phi, Omega, rw, n1, n2, damp = 1, var_damp = 1) {
   Cc <- ncol(Phi)
   if (n2 > n1) {
     L <- chol(solve(Omega))                       # cov = Omega^{-1};  z %*% L ~ N(0, cov)
     Phi <- rbind(Phi, matrix(0, n2 - n1, Cc))
     for (j in (n1 + 1):n2) {
-      eps <- as.numeric(rnorm(Cc) %*% L)
-      Phi[j, ] <- if (rw == 2) 2 * Phi[j - 1, ] - Phi[j - 2, ] + eps else Phi[j - 1, ] + eps
+      eps <- as.numeric(rnorm(Cc) %*% L) * var_damp^(j - n1 - 1)            # A3 variance shrink
+      Phi[j, ] <- if (rw == 2) Phi[j - 1, ] + damp * (Phi[j - 1, ] - Phi[j - 2, ]) + eps  # A1 damped drift
+                  else         Phi[j - 1, ] + eps
     }
   }
   Phi
@@ -310,6 +311,10 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
 #' @param quantiles quantiles to summarise.
 #' @param hazard,period_length if \code{hazard=TRUE} also return cause-specific additive hazards
 #'   \code{share x (-log(1-total_rate)/period_length)} (they sum to the all-cause hazard).
+#' @param damping,var_damping trend-damping and innovation-variance shrinkage for the forecast
+#'   extrapolation (the all-cause total \emph{and} the cause shares), as in \code{\link{predict_apc}}.
+#'   Defaults \code{1, 1} reproduce the free random walk; \code{damping < 1} curbs long-horizon
+#'   over-extrapolation, \code{var_damping < 1} stops the predictive bands fanning out without bound.
 #'
 #' @return list with one entry per cause and a \code{total} entry (quantiles of \code{rate}, and
 #'   \code{hazard} if requested, on the \code{[period, agegroup]} grid, plus \code{samples}); the
@@ -319,7 +324,10 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
 #' @export
 predict_multicause <- function(object, periods = 0, population = NULL,
                                quantiles = c(0.05, 0.5, 0.95),
-                               hazard = FALSE, period_length = 1) {
+                               hazard = FALSE, period_length = 1,
+                               damping = 1, var_damping = 1) {
+  if (!(damping >= 0 && damping <= 1)) stop("'damping' must be in [0, 1].")
+  if (!(var_damping > 0 && var_damping <= 1)) stop("'var_damping' must be in (0, 1].")
   if (!inherits(object, "apc_multicause")) stop("'object' must come from bamp_multicause().")
   hazard <- isTRUE(hazard)
   s <- object$samples; md <- object$model; dat <- object$data
@@ -329,19 +337,20 @@ predict_multicause <- function(object, periods = 0, population = NULL,
   n1 <- J; n2 <- J + periods; K2 <- (I - 1) * M + n2
 
   ## all-cause total rate (separate fit), projected
-  pt <- predict_apc(object$total, periods = periods, population = population)
+  pt <- predict_apc(object$total, periods = periods, population = population,
+                    damping = damping, var_damping = var_damping)
   totrate <- pt$samples$pr                            # [period, age, Dtot]
   D <- min(dim(s$phi)[1], dim(totrate)[3])
   totrate <- totrate[, , seq_len(D), drop = FALSE]
 
   rate <- lapply(seq_len(Cn), function(c) array(0, c(n2, I, D)))
   for (d in seq_len(D)) {
-    Phi <- .mvrw_predict(matrix(s$phi[d, , ], J, Cm), matrix(s$Omega[d, , ], Cm, Cm), ord_p, n1, n2)
+    Phi <- .mvrw_predict(matrix(s$phi[d, , ], J, Cm), matrix(s$Omega[d, , ], Cm, Cm), ord_p, n1, n2, damping, var_damping)
     if (!is.null(s$Omega_psi)) {                        # cross-cause coupled cohort projection
-      Psi <- .mvrw_predict(matrix(s$psi[d, , ], K, Cm), matrix(s$Omega_psi[d, , ], Cm, Cm), ord_c, K, K2)
+      Psi <- .mvrw_predict(matrix(s$psi[d, , ], K, Cm), matrix(s$Omega_psi[d, , ], Cm, Cm), ord_c, K, K2, damping, var_damping)
     } else {                                            # old objects: per-cause free RW (nu_psi)
       Psi <- vapply(seq_len(Cm), function(c)
-        .cj_predict_rw(c(s$psi[d, c, ], numeric(K2 - K)), s$nu_psi[d, c], ord_c, K, K2), numeric(K2))
+        .cj_predict_rw(c(s$psi[d, c, ], numeric(K2 - K)), s$nu_psi[d, c], ord_c, K, K2, damping, var_damping), numeric(K2))
     }
     for (i in 1:I) {
       kk <- (I - i) * M + (1:n2)

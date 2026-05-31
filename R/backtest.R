@@ -348,6 +348,63 @@ cascade_backtest <- function(taxonomy, cases, population, holdout = 2, n_origins
                  scale = scale, n_origins = length(origins)), class = "bamp_backtest")
 }
 
+#' Select random-walk orders by out-of-sample score
+#'
+#' @description
+#' Choose the period and cohort prior order (\code{"rw1"} vs \code{"rw2"}) for a single-population
+#' APC model from the data rather than by assumption, by rolling-origin out-of-sample scoring. RW1
+#' forecasts a flat trend (constant + noise); RW2 continues the last linear trend (and over-extrapolates
+#' at long horizons unless damped, see \code{\link{predict_apc}}'s \code{damping}). This refits each
+#' candidate on a training span and scores the held-out age profile, returning the score table and the
+#' minimiser -- the principled answer to "RW1 or RW2?".
+#'
+#' @param cases,population single \code{[periods x agegroups]} count / population matrices.
+#' @param periods_per_agegroup period/age grid ratio (as in \code{\link{bamp}}).
+#' @param holdout,n_origins,window rolling-origin controls (see \code{\link{multicause_backtest}}).
+#' @param age fixed age order (usually \code{"rw1"} or \code{"rw2"}).
+#' @param period_orders,cohort_orders candidate orders to compare.
+#' @param score \code{"energy"} (joint over ages) or \code{"crps"} (marginal).
+#' @param scale score on the \code{"lograte"} (default) or \code{"rate"} scale.
+#' @param mcmc_bamp,seed MCMC settings / seed for \code{\link{bamp}}.
+#' @return a list with \code{table} (one row per period x cohort combination, mean held-out
+#'   \code{energy} and \code{crps}) and \code{best} (the minimising \code{period}/\code{cohort}).
+#' @seealso \code{\link{multicause_backtest}}, \code{\link{predict_apc}}
+#' @export
+select_rw_order <- function(cases, population, periods_per_agegroup, holdout = 3, n_origins = 1,
+                            window = NULL, age = "rw1",
+                            period_orders = c("rw1", "rw2"), cohort_orders = c("rw1", "rw2"),
+                            score = c("energy", "crps"), scale = c("lograte", "rate"),
+                            mcmc_bamp = list(number_of_iterations = 3000, burn_in = 1000,
+                                             step = 2, tuning = 300), seed = 1) {
+  score <- match.arg(score); scale <- match.arg(scale)
+  cases <- as.matrix(cases); population <- as.matrix(population)
+  J <- nrow(cases); I <- ncol(cases)
+  tf <- if (scale == "lograte") function(x) log(pmax(x, 1e-6)) else identity
+  emp <- cases / population
+  origins <- .bt_origins(J, holdout, n_origins, window)
+  combos <- expand.grid(period = period_orders, cohort = cohort_orders, stringsAsFactors = FALSE)
+  rows <- lapply(seq_len(nrow(combos)), function(ci) {
+    es <- cr <- numeric(0)
+    for (o in origins) {
+      tr <- o$train; te <- o$test; Jtr <- max(tr)
+      f <- bamp(cases[tr, , drop = FALSE], population[tr, , drop = FALSE], age = age,
+                period = combos$period[ci], cohort = combos$cohort[ci],
+                periods_per_agegroup = periods_per_agegroup, mcmc.options = mcmc_bamp,
+                parallel = FALSE, verbose = FALSE)
+      p <- predict_apc(f, periods = max(te) - Jtr, population = population[seq_len(max(te)), , drop = FALSE])
+      for (tt in te) {
+        o_v <- tf(emp[tt, ]); E <- tf(t(p$samples$pr[tt, , ]))
+        es <- c(es, energy_score(o_v, E)); cr <- c(cr, crps_sample(o_v, E))
+      }
+    }
+    data.frame(period = combos$period[ci], cohort = combos$cohort[ci],
+               energy = mean(es), crps = mean(cr), stringsAsFactors = FALSE)
+  })
+  tab <- do.call(rbind, rows)
+  tab <- tab[order(tab[[score]]), ]; rownames(tab) <- NULL
+  list(table = tab, best = list(period = tab$period[1], cohort = tab$cohort[1]))
+}
+
 #' Convergence pass/fail report across many fits
 #'
 #' @description

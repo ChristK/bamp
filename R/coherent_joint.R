@@ -37,11 +37,20 @@
   T
 }
 
-## free random-walk extrapolation of a SHARED effect (as in predict_apc)
-.cj_predict_rw <- function(vec, lambda, rw, n1, n2) {
-  if (n2 > n1) for (i in (n1 + 1):n2)
-    vec[i] <- if (rw == 2) 2 * vec[i - 1] - vec[i - 2] + rnorm(1, 0, 1 / sqrt(lambda))
-              else                 vec[i - 1]               + rnorm(1, 0, 1 / sqrt(lambda))
+## random-walk extrapolation of a SHARED effect, with optional damped trend (A1)
+## and innovation-variance shrinkage (A3). `damp` in [0,1] damps the RW2 drift:
+## vec[i] = vec[i-1] + damp*(vec[i-1]-vec[i-2]) + noise, so damp=1 is the usual
+## RW2 (linear continuation), damp=0 collapses to RW1 (flat from the last level) --
+## the Gardner-McKenzie damped trend, which curbs RW2 over-extrapolation at long
+## horizons. `var_damp` in (0,1] geometrically shrinks the per-step innovation sd
+## so the predictive bands stop fanning out without bound. Defaults (1,1) reproduce
+## the previous free random walk exactly.
+.cj_predict_rw <- function(vec, lambda, rw, n1, n2, damp = 1, var_damp = 1) {
+  if (n2 > n1) for (i in (n1 + 1):n2) {
+    sdk <- (1 / sqrt(lambda)) * var_damp^(i - n1 - 1)
+    vec[i] <- if (rw == 2) vec[i - 1] + damp * (vec[i - 1] - vec[i - 2]) + rnorm(1, 0, sdk)
+              else                      vec[i - 1]                       + rnorm(1, 0, sdk)
+  }
   vec
 }
 
@@ -304,6 +313,9 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
 #' @param quantiles quantiles to summarise.
 #' @param hazard,period_length as in \code{\link{predict_apc}}: if \code{hazard=TRUE} also return the
 #'   per-stratum cumulative hazard \eqn{-\log(1-\mathrm{rate})/\mathrm{period\_length}}.
+#' @param damping,var_damping trend-damping and innovation-variance shrinkage for the shared period/
+#'   cohort extrapolation, as in \code{\link{predict_apc}}. Defaults \code{1, 1} reproduce the free
+#'   random walk. The mean-reverting sex deviation is unaffected (it already reverts via \code{rho}).
 #'
 #' @return list with one entry per sex and a \code{total} entry (quantiles of \code{rate}, and
 #'   \code{hazard} if requested, on the \code{[period, agegroup]} grid, plus \code{samples}); plus
@@ -313,11 +325,15 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
 #' @export
 predict_coherent <- function(object, periods = 0, population = NULL,
                              quantiles = c(0.05, 0.5, 0.95),
-                             hazard = FALSE, period_length = 1) {
+                             hazard = FALSE, period_length = 1,
+                             damping = 1, var_damping = 1) {
   if (!inherits(object, "apc_coherent")) stop("'object' must come from bamp_coherent().")
   hazard <- isTRUE(hazard)
+  if (!(damping >= 0 && damping <= 1)) stop("'damping' must be in [0, 1].")
+  if (!(var_damping > 0 && var_damping <= 1)) stop("'var_damping' must be in (0, 1].")
   if (!is.null(object$model$S) && object$model$S > 2L)
-    return(.predict_coherent_general(object, periods, population, quantiles, hazard, period_length))
+    return(.predict_coherent_general(object, periods, population, quantiles, hazard,
+                                     period_length, damping, var_damping))
   s <- object$samples; md <- object$model; dat <- object$data
   I <- dat$I; J <- dat$J; K <- dat$K; M <- dat$periods_per_agegroup
   ord_p <- md$ord[2]; ord_c <- md$ord[3]
@@ -328,8 +344,8 @@ predict_coherent <- function(object, periods = 0, population = NULL,
   rateF <- rateM <- array(0, c(n2, I, D))
   dev_ext <- matrix(0, n2, D)
   for (d in seq_len(D)) {
-    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2)
-    ps <- .cj_predict_rw(c(s$psi[d, ], numeric(K2 - K)),  s$nu_psi[d],    ord_c, K, K2)
+    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2, damping, var_damping)
+    ps <- .cj_predict_rw(c(s$psi[d, ], numeric(K2 - K)),  s$nu_psi[d],    ord_c, K, K2, damping, var_damping)
     de <- .cj_predict_ar(c(s$delta[d, ], numeric(n2 - n1)), s$lambda_d[d], rho_vec[d], n1, n2)
     dev_ext[, d] <- de
     dc <- if (isTRUE(md$use_dpsi))
@@ -460,15 +476,16 @@ predict_coherent <- function(object, periods = 0, population = NULL,
                 I = I, J = J, K = K, strata = names(cases))), class = "apc_coherent")
 }
 
-.predict_coherent_general <- function(object, periods, population, quantiles, hazard, period_length) {
+.predict_coherent_general <- function(object, periods, population, quantiles, hazard, period_length,
+                                      damping = 1, var_damping = 1) {
   s <- object$samples; md <- object$model; dat <- object$data
   I <- dat$I; J <- dat$J; K <- dat$K; M <- dat$periods_per_agegroup; S <- md$S
   ord_p <- md$ord[2]; ord_c <- md$ord[3]; rho <- md$rho
   n1 <- J; n2 <- J + periods; K2 <- (I - 1) * M + n2; D <- length(s$mu0); strata <- dat$strata
   rate <- lapply(seq_len(S), function(x) array(0, c(n2, I, D)))
   for (d in seq_len(D)) {
-    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2)
-    ps <- .cj_predict_rw(c(s$psi[d, ], numeric(K2 - K)),  s$nu_psi[d],    ord_c, K, K2)
+    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2, damping, var_damping)
+    ps <- .cj_predict_rw(c(s$psi[d, ], numeric(K2 - K)),  s$nu_psi[d],    ord_c, K, K2, damping, var_damping)
     ## per-stratum AR1 projection, then RE-CENTER per period so sum_s d_{s,j}=0 (no common-mode drift)
     dmat <- vapply(seq_len(S), function(st)
       .cj_predict_ar(c(s$d[d, st, ], numeric(n2 - n1)), s$lambda_d[d], rho, n1, n2), numeric(n2))  # [n2 x S]
