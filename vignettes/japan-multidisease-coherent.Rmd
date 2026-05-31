@@ -1,0 +1,251 @@
+---
+title: "Coherent multi-disease, multi-stratum mortality projection (Japan)"
+author: "bamp"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Coherent multi-disease, multi-stratum mortality projection (Japan)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE, warning = FALSE,
+                      fig.width = 7, fig.height = 4.4, dpi = 96)
+options(mc.cores = 1L)
+set.seed(1)
+```
+
+```{r lib}
+library(bamp)
+```
+
+## The problem
+
+Projecting mortality for several diseases, by sex, the *independent* way — one model per
+disease, one model per sex — has two well-known failures:
+
+1. **Incoherence across diseases.** Independently projected cause-specific rates do not add up
+   to a sensible all-cause trajectory, and the dependence between causes (cardiovascular causes
+   tend to rise and fall *together*) is ignored.
+2. **Divergence across strata.** Independent sex-specific forecasts drift apart without bound,
+   producing implausible male/female gaps at long horizons.
+
+This vignette uses Japanese mortality (1995–2019, ages 30–80+) for **CHD**, **stroke** and
+**all other ("non-modelled") causes** — three competing causes that partition all deaths
+(`non-modelled = total − CHD − stroke`) — to show the **recommended** coherent approach and
+contrast it with independent projections. We project to **2050** using the official population
+projections as future denominators.
+
+```{r data}
+## ---- load the bundled Japan data, ages 30-80+, [year x agegroup] ----
+jdir <- system.file("extdata", "japan", package = "bamp")
+if (jdir == "" || !dir.exists(jdir)) jdir <- "../inst/extdata/japan"   # source tree (build time)
+age10 <- c("age30_34","age35_39","age40_44","age45_49","age50_54","age55_59",
+           "age60_64","age65_69","age70_74","age75_79")
+age80p <- c("age80_84","age85_89","age90_94","age95_99","age100_")
+read_death <- function(f) {
+  d <- read.csv(file.path(jdir, f), check.names = FALSE)
+  M <- cbind(as.matrix(d[, age10]), "80+" = rowSums(d[, age80p]))      # collapse 80+ to match pop
+  rownames(M) <- d[["year"]]; M
+}
+pop_mat <- function(sx) {
+  p <- read.csv(file.path(jdir, "population_per_5yo.csv"))
+  m <- xtabs(pops ~ Year + age, data = p[p$sex == sx & p$age %in% seq(30, 80, 5), ])
+  matrix(as.double(m), nrow(m), ncol(m), dimnames = dimnames(m))
+}
+load_sex <- function(sx, fit = 1995:2019, to = 2050) {
+  yr <- as.character(fit)
+  chd <- read_death(sprintf("chd_%s.csv", sx))[yr, ]
+  str <- read_death(sprintf("stroke_%s.csv", sx))[yr, ]
+  oth <- read_death(sprintf("nonmodeled_%s.csv", sx))[yr, ]
+  pop <- pop_mat(sx)
+  list(CHD = chd, stroke = str, other = oth, total = chd + str + oth,
+       pop = pop[yr, ], pop_fut = pop[as.character(min(fit):to), ])
+}
+men   <- load_sex("men")
+women <- load_sex("women")
+ages  <- c("30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80+")
+years <- 1995:2050; A <- 9   # focus age band 70-74
+cat(sprintf("grid: %d age groups x %d fitted years (1995-2019), projected to 2050\n",
+            length(ages), nrow(men$total)))
+```
+
+```{r plot-helpers, include = FALSE}
+band <- function(x, q, col, add = FALSE, lty = 1, ...) {   # q: [quantile, period] (lo, mid, hi)
+  if (!add) plot(x, q[2, ], type = "n", ...)
+  polygon(c(x, rev(x)), c(q[1, ], rev(q[3, ])), col = adjustcolor(col, 0.18), border = NA)
+  lines(x, q[2, ], col = col, lwd = 2.2, lty = lty)
+}
+mco <- list(iterations = 1500, burn_in = 500, thin = 2)            # prototype MCMC (modest, for a vignette)
+bo  <- list(number_of_iterations = 3000, burn_in = 1000, step = 2, tuning = 300)
+```
+
+## Part A — competing diseases, coherently (men)
+
+The recommended model for several competing causes is `bamp_multicause()`. It stick-breaks the
+deaths into cause-specific shares, so the cause rates **sum to all-cause by construction**, and it
+couples the cause *trends* through a cross-cause covariance, so it learns whether causes move
+together. Cause-specific **hazards** (additive, per person-year) are what a competing-risk
+life-table / microsimulation needs.
+
+```{r fit-multicause}
+fit_mc <- bamp_multicause(list(CHD = men$CHD, stroke = men$stroke, other = men$other),
+                          men$pop, age = "rw1", period = "rw1", cohort = "rw1",
+                          periods_per_agegroup = 5, order = 1:3, mcmc = mco)
+pmc <- predict_multicause(fit_mc, periods = 31, population = men$pop_fut,
+                          hazard = TRUE, period_length = 1)
+```
+
+### Cause-specific projections (and they stay coherent)
+
+```{r plot-causes, fig.height = 4.6}
+cols <- c(CHD = "#c0392b", stroke = "#2980b9", other = "#27ae60")
+yl <- range(unlist(lapply(names(cols), function(nm) pmc[[nm]]$rate[c(1, 3), , A])))
+plot(NA, xlim = c(1995, 2050), ylim = yl, log = "y", xlab = "year",
+     ylab = "mortality rate, log scale (age 70-74)",
+     main = "Men: cause-specific mortality, 1995-2050")
+abline(v = 2019, lty = 3, col = "grey50")
+for (nm in names(cols)) {
+  band(years, pmc[[nm]]$rate[, , A], cols[nm], add = TRUE)
+  points(1995:2019, men[[nm]][, A] / men$pop[, A], pch = 16, cex = 0.5, col = cols[nm])
+}
+legend("bottomleft", names(cols), col = cols, lwd = 2.2, bty = "n")
+text(2019, yl[2], "fit | project", pos = 2, cex = 0.8, col = "grey40")
+```
+
+CHD and stroke both decline; "other" causes dominate and flatten. Dots are the observed rates.
+Because the model is coherent, the three cause rates **add up to the all-cause rate every draw**:
+
+```{r coherence-check}
+cat("max |sum of cause rates - all-cause| over the whole grid:", signif(pmc$coherence_maxerr, 3), "\n")
+```
+
+### What independent cause models miss #1: coherence with all-cause
+
+If instead we fit each cause *independently* and add the projected rates, the sum drifts away
+from a direct all-cause projection — there is no guarantee the parts add to the whole.
+
+```{r incoherence, fig.height = 4.4}
+fit_ind <- lapply(c("CHD", "stroke", "other"), function(nm)
+  bamp(men[[nm]], men$pop, age = "rw1", period = "rw1", cohort = "rw1",
+       periods_per_agegroup = 5, mcmc.options = bo, parallel = FALSE, verbose = FALSE))
+pr_ind <- lapply(fit_ind, predict_apc, periods = 31, population = men$pop_fut)
+sum_ind <- Reduce(`+`, lapply(pr_ind, function(p) p$pr[2, , A]))      # sum of independent medians
+futA <- years >= 2019
+plot(years, pmc$total$rate[2, , A], type = "l", lwd = 2.4, col = "black",
+     xlim = c(2019, 2050), ylim = range(c(pmc$total$rate[2, futA, A], sum_ind[futA])),
+     xlab = "year", ylab = "all-cause rate (age 70-74)",
+     main = "Men, all-cause: coherent total vs sum of independent cause models")
+lines(years, sum_ind, lwd = 2.4, col = "#e67e22", lty = 2)
+abline(v = 2019, lty = 3, col = "grey50")
+legend("topright", c("coherent (bamp_multicause)", "sum of independent cause fits"),
+       col = c("black", "#e67e22"), lwd = 2.4, lty = c(1, 2), bty = "n")
+```
+
+The orange "sum of independent fits" peels away from the coherent all-cause projection — the
+incoherence grows with horizon. The coherent model cannot do this: its causes are shares of the
+all-cause total.
+
+### What independent cause models miss #2: cross-cause dependence
+
+The coupled model estimates how the cause trends move together (the cross-cause correlation of
+the period innovations). Independent models implicitly assume this is **zero**.
+
+```{r cor-omega}
+round(pmc$cor_omega, 2)
+```
+
+CHD and stroke are strongly **positively** correlated — in Japan both cardiovascular causes
+declined together (shared risk-factor improvements). A coupled model propagates that joint
+movement into the forecast; independent models treat the causes as unrelated, mis-stating the
+joint uncertainty (e.g. of total cardiovascular mortality).
+
+## Part B — coherence across sex
+
+For strata (here sex) the recommended model is `bamp_coherent()`: the sexes share the period and
+cohort trends and differ by a *mean-reverting* deviation, so the male/female gap cannot diverge.
+We compare it with two independent `bamp` fits on total (30+) mortality.
+
+```{r fit-sex}
+fc <- bamp_coherent(list(men = men$total, women = women$total),
+                    list(men = men$pop,  women = women$pop),
+                    age = "rw1", period = "rw1", cohort = "rw1",
+                    periods_per_agegroup = 5, deviation = "ar1", mcmc = mco)
+pc <- predict_coherent(fc, periods = 31, population = list(men = men$pop_fut, women = women$pop_fut))
+
+fm <- bamp(men$total,   men$pop,   age = "rw1", period = "rw1", cohort = "rw1",
+           periods_per_agegroup = 5, mcmc.options = bo, parallel = FALSE, verbose = FALSE)
+fw <- bamp(women$total, women$pop, age = "rw1", period = "rw1", cohort = "rw1",
+           periods_per_agegroup = 5, mcmc.options = bo, parallel = FALSE, verbose = FALSE)
+pm <- predict_apc(fm, periods = 31, population = men$pop_fut)
+pw <- predict_apc(fw, periods = 31, population = women$pop_fut)
+```
+
+### Projected male/female mortality
+
+```{r plot-sex-rates, fig.height = 4.6}
+par(mfrow = c(1, 2), mar = c(4, 4, 2.4, 1))
+yl <- c(0, 0.05)
+plot(NA, xlim = c(1995, 2050), ylim = yl, xlab = "year", ylab = "total mortality (70-74)",
+     main = "Coherent (bamp_coherent)")
+band(years, pc$men$rate[, , A],   "#c0392b", add = TRUE)
+band(years, pc$women$rate[, , A], "#8e44ad", add = TRUE)
+abline(v = 2019, lty = 3, col = "grey50"); legend("topright", c("men","women"),
+       col = c("#c0392b","#8e44ad"), lwd = 2.2, bty = "n")
+plot(NA, xlim = c(1995, 2050), ylim = yl, xlab = "year", ylab = "",
+     main = "Independent (two bamp fits)")
+band(years, pm$pr[, , A], "#c0392b", add = TRUE, lty = 2)
+band(years, pw$pr[, , A], "#8e44ad", add = TRUE, lty = 2)
+abline(v = 2019, lty = 3, col = "grey50")
+par(mfrow = c(1, 1))
+```
+
+### The headline: the sex gap diverges independently, but not coherently
+
+The right way to see the difference is the **uncertainty of the male/female gap** as the horizon
+grows. The coherent gap is *stationary* (it plateaus); the independent gap is a random walk (it
+grows without bound and overtakes the coherent one).
+
+```{r plot-gap-sd, fig.height = 4.4}
+gap_sd <- function(rm, rw) vapply(seq_along(years),
+  function(t) sd(log(rm[t, A, ]) - log(rw[t, A, ])), 0.0)
+sd_coh <- gap_sd(pc$men$samples$rate, pc$women$samples$rate)
+sd_ind <- gap_sd(pm$samples$pr,        pw$samples$pr)
+fut <- years >= 2019
+plot(years[fut], sd_coh[fut], type = "l", lwd = 2.6, col = "#16a085", ylim = c(0, max(sd_ind[fut])),
+     xlab = "year", ylab = "SD of male-female log-gap (age 70-74)",
+     main = "Sex-gap uncertainty: coherent plateaus, independent diverges")
+lines(years[fut], sd_ind[fut], lwd = 2.6, col = "#e67e22", lty = 2)
+legend("topleft", c("coherent (mean-reverting)", "independent (random walk)"),
+       col = c("#16a085", "#e67e22"), lwd = 2.6, lty = c(1, 2), bty = "n")
+```
+
+The independent gap (orange) keeps fanning out and crosses above the coherent gap (teal) — by
+mid-century its implied male/female differences are arbitrarily wide. The coherent model holds the
+gap to a plausible, stationary band. The point forecast tells the same story: the independent gap
+*drifts* (it extrapolates each sex's recent slope), while the coherent gap stays put.
+
+```{r mean-drift}
+gap_mean <- function(rm, rw, t) mean(log(rm[t, A, ]) - log(rw[t, A, ]))
+cat(sprintf("mean male-female log-gap (70-74)  2020 -> 2050:  coherent %.2f -> %.2f | independent %.2f -> %.2f\n",
+            gap_mean(pc$men$samples$rate, pc$women$samples$rate, 26),
+            gap_mean(pc$men$samples$rate, pc$women$samples$rate, 56),
+            gap_mean(pm$samples$pr, pw$samples$pr, 26),
+            gap_mean(pm$samples$pr, pw$samples$pr, 56)))
+```
+
+## Recommended workflow
+
+* **Diseases that compete** → `bamp_multicause()` (cause shares sum to all-cause; cross-cause
+  trends coupled; emit additive per-person-year hazards for a microsimulation).
+* **Exhaustive strata (sex, education, …)** → `bamp_coherent()` (shared trend + mean-reverting
+  deviation; the between-stratum gap cannot diverge). `S > 2` strata are supported.
+* **Both at once** → layer them: run `bamp_multicause()` within each sex (or stick-break causes on
+  top of a sex-coherent total). See `docs/coherent-forecasting.md` for the nested cascade and the
+  out-of-sample validation harness (`coherence_backtest()`, `select_rho()`).
+
+The advantage over independent projection is not mainly short-horizon accuracy (the methods are
+comparable there) but **coherence** — the parts add to the whole, the causes move together as the
+data say, and the strata stay plausibly related — which is exactly what long-range, multi-disease,
+multi-stratum projection needs.
+```
