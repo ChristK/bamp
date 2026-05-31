@@ -1,0 +1,203 @@
+---
+title: "Using bamp hazards in a competing-risk microsimulation"
+author: "bamp"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Using bamp hazards in a competing-risk microsimulation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 6, fig.height = 4)
+options(mc.cores = 1L)
+set.seed(1)
+```
+
+```{r lib}
+library(bamp)
+```
+
+## Why hazards, not probabilities
+
+`predict_apc()` returns, by default, a per-period **risk** `pr` -- a binomial probability that an
+individual in a given age group and period experiences the event. Risks are exactly what you want
+for a *single* outcome. They are the **wrong** quantity when several causes compete for the same
+people, for two reasons:
+
+1. **Risks do not add.** If two causes have one-period risks `p1` and `p2`, the probability of dying
+   of *either* is `1 - (1-p1)(1-p2)`, **not** `p1 + p2`. Summing risks double-counts the people who
+   would have died of both and can even exceed 1.
+2. **Risks are not transferable across a changing survivor pool.** If you reduce one cause, more
+   people stay alive and are then exposed to the others -- a risk computed under the old survival is
+   no longer valid.
+
+Cumulative **hazards** solve both problems: they *add* across competing causes
+(`H_all = sum_c H_c`), and the survival they imply, `S = exp(-H_all)`, automatically accounts for
+the shared population at risk. So the contract is:
+
+> **bamp emits cause-specific hazards. The microsimulation owns the competing-risk arithmetic**
+> (who is alive, which event wins) on a shared survivor pool.
+
+`predict_apc(..., hazard = TRUE)` returns the cumulative cause-specific hazard
+`h = -log(1 - p)`, divided by `period_length` so it is expressed *per person-year*:
+
+```{r fit}
+data(apc)                               # example cases / population, [periods x agegroups]
+ppa  <- 5                               # 5 one-year periods per (5-year) age group
+mco  <- list(number_of_iterations = 400, burn_in = 100, step = 2, tuning = 50)
+
+# Two competing causes (here synthetic splits of the example data) plus the all-cause total.
+cases_ihd    <- round(cases * 0.55)
+cases_stroke <- cases - cases_ihd
+
+fit_ihd    <- bamp(cases_ihd,    population, age = "rw1", period = "rw1", cohort = "rw1",
+                   periods_per_agegroup = ppa, mcmc.options = mco, parallel = FALSE)
+fit_stroke <- bamp(cases_stroke, population, age = "rw1", period = "rw1", cohort = "rw1",
+                   periods_per_agegroup = ppa, mcmc.options = mco, parallel = FALSE)
+fit_all    <- bamp(cases,        population, age = "rw1", period = "rw1", cohort = "rw1",
+                   periods_per_agegroup = ppa, mcmc.options = mco, parallel = FALSE)
+
+# period_length = 5 because each period spans 5 calendar years -> hazard per person-year
+pred_ihd    <- predict_apc(fit_ihd,    periods = 2, hazard = TRUE, period_length = ppa)
+pred_stroke <- predict_apc(fit_stroke, periods = 2, hazard = TRUE, period_length = ppa)
+pred_all    <- predict_apc(fit_all,    periods = 2, hazard = TRUE, period_length = ppa)
+
+str(pred_ihd$hazard)                    # [quantile, period, agegroup]
+```
+
+## Keeping causes coherent with all-cause
+
+Because the cause models were fitted independently, their hazards will not sum *exactly* to the
+all-cause hazard. `reconcile_apc()` projects them onto the coherent subspace (on the hazard scale,
+marginally) so they do:
+
+```{r reconcile}
+rec <- reconcile_apc(pred_all, list(IHD = pred_ihd, stroke = pred_stroke))
+
+# after reconciliation the cause hazards add up to the total, cell by cell
+rec$coherence_maxerr
+range(rec$causes$IHD$hazard_mean + rec$causes$stroke$hazard_mean - rec$total$hazard_mean)
+```
+
+For a *single joint posterior* that is coherent by construction (a stick-breaking multinomial APC),
+see the design note `docs/coherent-forecasting.md`; `reconcile_apc()` is the lightweight,
+zero-engine-change route that is usually enough to feed a microsimulation.
+
+## From age groups to single years of age
+
+bamp models age *groups* and (here) 5-year periods. A microsimulation that advances one year of age
+per one-year cycle needs a hazard for every single year of age and calendar year.
+`disaggregate_hazard()` expands the grid by piecewise-constant replication (each group's
+per-person-year hazard applies to each single year it covers):
+
+```{r disagg}
+# use the posterior-median hazard surface [period, agegroup] for a point microsimulation
+med_ihd    <- pred_ihd$hazard["50%", , ]
+med_stroke <- pred_stroke$hazard["50%", , ]
+
+h_ihd    <- disaggregate_hazard(med_ihd,    agegroup_width = 5, period_width = ppa)
+h_stroke <- disaggregate_hazard(med_stroke, agegroup_width = 5, period_width = ppa)
+
+dim(med_ihd)     # [periods, agegroups]
+dim(h_ihd)       # [calendar years, single years of age]
+```
+
+## A minimal competing-risk microsimulation
+
+Each cycle a living person faces all cause-specific hazards at once; the total hazard determines
+*whether* they die, and the hazards' relative sizes determine *which cause* wins. This is the
+"one event on a shared survivor pool" step that belongs to the simulation, not to bamp.
+
+```{r microsim-fn}
+# H: array [year, single-age, cause] of per-person-year cause-specific hazards
+simulate_cr <- function(H, n, a0 = 1L) {
+  ny <- dim(H)[1]; na <- dim(H)[2]; nc <- dim(H)[3]
+  cycles <- min(ny, na - a0 + 1L)                 # follow the cohort along the age/period diagonal
+  alive <- rep(TRUE, n); cause <- integer(n); tod <- rep(NA_integer_, n)
+  for (s in seq_len(cycles)) {
+    idx <- which(alive); if (!length(idx)) break
+    hc   <- H[s, a0 + s - 1L, ]                   # cause hazards at this age & year
+    Htot <- sum(hc)
+    die  <- stats::runif(length(idx)) < (1 - exp(-Htot))   # one-year all-cause death prob
+    if (any(die)) {
+      d <- idx[die]
+      cause[d] <- sample.int(nc, length(d), replace = TRUE, prob = hc / Htot)  # winning cause
+      tod[d] <- s; alive[d] <- FALSE
+    }
+  }
+  list(cause = cause, tod = tod, alive = alive)
+}
+
+H <- array(c(h_ihd, h_stroke), c(dim(h_ihd), 2),
+           dimnames = list(NULL, NULL, c("IHD", "stroke")))
+
+set.seed(42)
+sim <- simulate_cr(H, n = 20000, a0 = 1L)
+table(factor(sim$cause, levels = 0:2, labels = c("alive", "IHD", "stroke")))
+```
+
+## Competing risk in action: reducing one cause helps reveal the others
+
+The reason cause-specific projections cannot be treated as independent is that the survivor pool is
+shared. If we halve the IHD hazard, more people stay alive -- and some of those then die of stroke,
+so stroke deaths *rise* over the horizon even though the stroke hazard was untouched:
+
+```{r competing-demo}
+H_low_ihd <- H
+H_low_ihd[, , "IHD"] <- 0.5 * H_low_ihd[, , "IHD"]
+
+set.seed(42); base <- simulate_cr(H,         n = 20000)
+set.seed(42); lowi <- simulate_cr(H_low_ihd, n = 20000)
+
+counts <- rbind(
+  baseline      = table(factor(base$cause, levels = 1:2)),
+  `halved IHD`  = table(factor(lowi$cause, levels = 1:2))
+)
+colnames(counts) <- c("IHD", "stroke")
+counts
+# stroke deaths increase under halved-IHD because more people survive to be at risk of stroke:
+counts["halved IHD", "stroke"] - counts["baseline", "stroke"]
+```
+
+This is exactly the dependence that a naive "project each disease independently" approach misses,
+and it is captured *for free* once bamp hands the simulation additive per-person-year hazards.
+
+## Coherent hazards by sex (or any exhaustive stratum)
+
+Forecasting sexes independently lets their rates diverge implausibly and they will not aggregate to
+the all-sex total. `bamp_strata()` / `predict_strata()` give an exhaustive partition (here sex) that
+sums to the total *exactly*, every draw, and emits per-stratum hazards ready for a sex-stratified
+microsimulation:
+
+```{r strata}
+# synthetic two-sex split of the all-cause data
+caseF <- round(cases * 0.48); caseM <- cases - caseF
+popF  <- round(population * 0.51); popM <- population - popF
+n1 <- nrow(cases); fut <- function(P) rbind(P, P[rep(n1, 2), , drop = FALSE])
+
+fit_sex <- bamp_strata(list(female = caseF, male = caseM),
+                       list(female = popF,  male = popM),
+                       age = "rw1", period = "rw1", cohort = "rw1",
+                       periods_per_agegroup = ppa, mcmc.options = mco, parallel = FALSE)
+
+ps <- predict_strata(fit_sex, periods = 2,
+                     population = list(female = fut(popF), male = fut(popM)),
+                     hazard = TRUE, period_length = ppa)
+
+ps$coherence_maxerr                                   # 0: female + male == total, every draw
+hF <- disaggregate_hazard(ps$female$hazard["50%", , ], agegroup_width = 5, period_width = ppa)
+dim(hF)                                               # per-person-year IHD-or-all-cause hazard, single year
+```
+
+You can stack the sex split and the cause split (cause-within-sex) the same way; see
+`docs/coherent-forecasting.md` for the nested-cascade construction and the validation harness.
+
+## Recap
+
+* Ask `predict_apc()` for **hazards** (`hazard = TRUE`, `period_length =` period width in years).
+* Make competing causes **coherent** with all-cause via `reconcile_apc()` (hazard scale).
+* **Disaggregate** to single year of age / calendar year with `disaggregate_hazard()`.
+* Let the **microsimulation** do the competing-risk step (one event wins on a shared survivor pool).
+* For coherent strata (sex, education, ...), use `bamp_strata()` / `predict_strata()`.
+```

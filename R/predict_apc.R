@@ -5,20 +5,38 @@
 #' @param population matrix of (predicted) population, if NULL, population data from original bamp call will be used
 #' @param quantiles vector of quantiles to compute
 #' @param update boolean. If TRUE, object will be returned with results added to the object
+#' @param hazard boolean. If TRUE, additionally return the cumulative cause-specific hazard
+#' \eqn{h = -\log(1-p)} (per \code{period_length}) alongside the probabilities. Hazards are additive
+#' across competing causes, so these are the quantity to feed to a competing-risk life-table or
+#' microsimulation (see Details).
+#' @param period_length single positive number: the length of one period in the time units you want
+#' the hazard expressed per (e.g. years per period). Default 1 returns the cumulative hazard per period.
+#' Only used when \code{hazard=TRUE}.
 #'
-#' @description Prediction of rates and, if possible, cases from the Bayesian age-period-cohort model 
+#' @description Prediction of rates and, if possible, cases from the Bayesian age-period-cohort model
 #' using the prior assumptions (random walks) of the model and the estimated variance of the random walk.
 #' For example, random walk of first order (rw1) for period effect predicts constant effects for future periods plus noise.
 #' 
 #' @details This function will return predicted rates for future periods. For this, future period and cohort effects will be predicted.
 #' Further age group effects will not be predicted. The rates are random samples from the predictive distribution; number of samples is equal
 #' to number of MCMC iterations. Quantiles will be provided for convenience, but all samples are available.
-#' If population numbers are given, number of cases will also be predicted. Number of cases 
+#' If population numbers are given, number of cases will also be predicted. Number of cases
 #' will not only be predicted for future periods,
 #' but also for the time periods where data are available; this can be used for model assessment.
 #'
+#' When forecasting several competing causes of death (or disease), fit one model per cause
+#' (cause-specific events out of the at-risk population, treating other-cause events as ordinary
+#' survivors), call \code{predict_apc(..., hazard=TRUE)} for each, and pass the resulting
+#' \emph{hazards} to your life-table or microsimulation. Cause-specific hazards add up
+#' (\eqn{H_{all-cause}=\sum_c H_c}); the implied all-cause risk is
+#' \eqn{1-\exp(-\sum_c H_c)=1-\prod_c (1-p_c)}, which is \emph{not} \eqn{\sum_c p_c}. Working on the
+#' probability scale and summing would double-count the shared population at risk. The mechanical
+#' competing-risk coupling (shared survivors) is then handled by the downstream life-table, not here.
+#'
 #' @return list with quantiles of predicted probabilities (\code{pr}), predicted cases (\code{cases}) and predicted cases per period (\code{cases_period})
-#' and a list samples with MCMC samples of pr, cases and cases_period. 
+#' and a list samples with MCMC samples of pr, cases and cases_period.
+#' If \code{hazard=TRUE}, the cumulative cause-specific hazard is added as \code{hazard} (quantiles) and
+#' \code{samples$hazard}, on the same \code{[period, age]} grid as \code{pr}.
 #' If \code{update=TRUE}, the apc object will be returned with this list (predicted) added.
 #' @seealso \code{vignette("prediction", package = "bamp")}
 #' @import parallel
@@ -32,7 +50,7 @@
 #' pred <- predict_apc(model, periods=1)
 #' plot(pred$pr[2,11,], main="Predicted rate per agegroup", ylab="p")
 #' }
-predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0.95), update=FALSE){
+predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0.95), update=FALSE, hazard=FALSE, period_length=1){
   ksi_prognose <-
     function(prepi, vdb, noa, nop, nop2, noc, zmode){
       my<-prepi[1]
@@ -86,8 +104,12 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
       return(phi)
     }
   
+  hazard <- isTRUE(hazard)
+  if (hazard && (!is.numeric(period_length) || length(period_length)!=1L || is.na(period_length) || period_length<=0))
+    stop("'period_length' must be a single positive number (length of one period in the time units you want the hazard expressed per).")
+
   phi<-psi<-NA
-  
+
   a1<-dim(object$data$cases)[1]
   n1<-dim(object$data$cases)[2]
   n2<-n1+periods
@@ -146,7 +168,15 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
   }
   
   pr <- exp(ksi0)/(1+exp(ksi0))
-  
+
+  # Optional hazard scale. Convert the per-period event probability p into the
+  # cumulative cause-specific hazard h = -log(1-p) over one period, divided by
+  # period_length to express it per time unit (e.g. per year). Cause-specific
+  # hazards are ADDITIVE across competing causes (H_allcause = sum_c H_c),
+  # unlike risks, so these are the correct quantity to feed to a competing-risk
+  # life-table / microsimulation. See the Details section of ?predict_apc.
+  hz <- if (hazard) -log1p(-pr)/period_length else NULL
+
   if (is.null(population))population<-object$data$population
   
   n0<-min(dim(population)[1],n2)
@@ -177,7 +207,8 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     "period"=period,
     "cohort"=cohort
   )
-  
+  if (hazard) samples[["hazard"]] <- hz
+
   predicted<-list(
     "pr"=qu_predicted_pr,
     "cases"=qu_predicted_cases,
@@ -186,7 +217,8 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     "cohort"=apply(cohort,2,quantile,quantiles),
     "samples"=samples
   )
-  
+  if (hazard) predicted[["hazard"]] <- apply(hz, 1:2, quantile, quantiles)
+
   if (!update){
     return(predicted)}
   else{

@@ -9,7 +9,9 @@ predict_apc(
   periods = 0,
   population = NULL,
   quantiles = c(0.05, 0.5, 0.95),
-  update = FALSE
+  update = FALSE,
+  hazard = FALSE,
+  period_length = 1
 )
 }
 \arguments{
@@ -22,14 +24,25 @@ predict_apc(
 \item{quantiles}{vector of quantiles to compute}
 
 \item{update}{boolean. If TRUE, object will be returned with results added to the object}
+
+\item{hazard}{boolean. If TRUE, additionally return the cumulative cause-specific hazard
+\eqn{h = -\log(1-p)} (per \code{period_length}) alongside the probabilities. Hazards are additive
+across competing causes, so these are the quantity to feed to a competing-risk life-table or
+microsimulation (see Details).}
+
+\item{period_length}{single positive number: the length of one period in the time units you want
+the hazard expressed per (e.g. years per period). Default 1 returns the cumulative hazard per period.
+Only used when \code{hazard=TRUE}.}
 }
 \value{
 list with quantiles of predicted probabilities (\code{pr}), predicted cases (\code{cases}) and predicted cases per period (\code{cases_period})
-and a list samples with MCMC samples of pr, cases and cases_period. 
+and a list samples with MCMC samples of pr, cases and cases_period.
+If \code{hazard=TRUE}, the cumulative cause-specific hazard is added as \code{hazard} (quantiles) and
+\code{samples$hazard}, on the same \code{[period, age]} grid as \code{pr}.
 If \code{update=TRUE}, the apc object will be returned with this list (predicted) added.
 }
 \description{
-Prediction of rates and, if possible, cases from the Bayesian age-period-cohort model 
+Prediction of rates and, if possible, cases from the Bayesian age-period-cohort model
 using the prior assumptions (random walks) of the model and the estimated variance of the random walk.
 For example, random walk of first order (rw1) for period effect predicts constant effects for future periods plus noise.
 }
@@ -37,9 +50,18 @@ For example, random walk of first order (rw1) for period effect predicts constan
 This function will return predicted rates for future periods. For this, future period and cohort effects will be predicted.
 Further age group effects will not be predicted. The rates are random samples from the predictive distribution; number of samples is equal
 to number of MCMC iterations. Quantiles will be provided for convenience, but all samples are available.
-If population numbers are given, number of cases will also be predicted. Number of cases 
+If population numbers are given, number of cases will also be predicted. Number of cases
 will not only be predicted for future periods,
 but also for the time periods where data are available; this can be used for model assessment.
+
+When forecasting several competing causes of death (or disease), fit one model per cause
+(cause-specific events out of the at-risk population, treating other-cause events as ordinary
+survivors), call \code{predict_apc(..., hazard=TRUE)} for each, and pass the resulting
+\emph{hazards} to your life-table or microsimulation. Cause-specific hazards add up
+(\eqn{H_{all-cause}=\sum_c H_c}); the implied all-cause risk is
+\eqn{1-\exp(-\sum_c H_c)=1-\prod_c (1-p_c)}, which is \emph{not} \eqn{\sum_c p_c}. Working on the
+probability scale and summing would double-count the shared population at risk. The mechanical
+competing-risk coupling (shared survivors) is then handled by the downstream life-table, not here.
 }
 \examples{
 \dontrun{

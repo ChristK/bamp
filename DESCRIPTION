@@ -17,7 +17,7 @@ Depends: R (>= 3.5.0)
 Imports: coda, graphics, parallel, stats, abind
 LazyData: true
 VignetteBuilder: knitr, R.rsp
-Suggests: knitr, rmarkdown, R.rsp
+Suggests: knitr, rmarkdown, R.rsp, tinytest
 URL: https://volkerschmid.github.io/bamp/
 BugReports: https://github.com/volkerschmid/bamp/issues
 NeedsCompilation: yes
