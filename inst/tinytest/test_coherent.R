@@ -261,3 +261,24 @@ rL <- p3$low$samples$rate[seq_len(np3), , ]; rM <- p3$mid$samples$rate[seq_len(n
 rH <- p3$high$samples$rate[seq_len(np3), , ]
 expect_true(all(p3$total$samples$rate >= pmin(rL, rM, rH) - 1e-9 &
                 p3$total$samples$rate <= pmax(rL, rM, rH) + 1e-9))
+
+## ---- cascade: nested disease taxonomy, coherent at every level ----
+d1 <- round(cases * .3); d2 <- round(cases * .25); d3 <- round(cases * .25)
+d4 <- cases - d1 - d2 - d3; d4[d4 < 0] <- 0
+casc <- suppressMessages(bamp_cascade(list(A = c("d1", "d2"), B = c("d3", "d4")),
+   list(d1 = d1, d2 = d2, d3 = d3, d4 = d4), population, periods_per_agegroup = ppa, mcmc = mh))
+expect_inherits(casc, "apc_cascade")
+pcasc <- predict_cascade(casc, periods = 2, hazard = TRUE, period_length = ppa)
+expect_identical(sort(pcasc$leaves), c("d1", "d2", "d3", "d4"))
+expect_true(pcasc$coherence_maxerr < 1e-9)               # leaves sum to all-cause
+gA <- pcasc$d1$samples$rate + pcasc$d2$samples$rate      # within-group: d1+d2 == group A
+Dc <- min(dim(gA)[3], dim(pcasc$groups$A$samples$rate)[3])
+expect_true(max(abs(gA[, , seq_len(Dc)] - pcasc$groups$A$samples$rate[, , seq_len(Dc)])) < 1e-9)
+shz <- Reduce(`+`, lapply(pcasc$leaves, function(l) pcasc[[l]]$samples$hazard))
+expect_true(max(abs(shz - pcasc$total$samples$hazard)) < 1e-9)   # leaf hazards sum to all-cause
+# a singleton group (leaf == group) works and stays coherent
+casc2 <- suppressMessages(bamp_cascade(list(A = c("d1", "d2"), C = "d34"),
+   list(d1 = d1, d2 = d2, d34 = d3 + d4), population, periods_per_agegroup = ppa, mcmc = mh))
+p2 <- predict_cascade(casc2, periods = 1)
+expect_true(p2$coherence_maxerr < 1e-9)
+expect_false(is.null(p2$d34$rate))

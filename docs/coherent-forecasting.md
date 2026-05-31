@@ -328,6 +328,17 @@ validated independently, reuses the same `predict_ar` / `emit='hazard'` plumbing
 the hardest linear algebra until evidence (a held-out **joint** score showing real
 cross-margin interaction) shows the fully-joint field is needed.
 
+**IMPLEMENTED — the disease cascade** (`bamp_cascade()` / `predict_cascade()`,
+`R/coherent_cascade.R`): the 2-level taxonomy cascade as nested layered fits — a group-level
+`bamp_multicause` (groups partition all-cause) plus a leaf-level `bamp_multicause` within each
+group — combined by `leaf = all-cause × group-share × leaf-share`. Coherent at **every** level by
+construction (validated machine-exact ~1e-17: leaves→group→all-cause for rates *and* additive
+hazards). Because each fit is small it scales where a flat multinomial cannot: **30 diseases
+(5 groups × 6) fit + predict end-to-end in ~60 s** on the dense reference engine. It couples trends
+*within* a group; the cross-group, risk-factor-driven coupling (smoking across CVD/cancer/COPD) is
+the tree-orthogonal piece, deferred to **declared risk-factor covariates** (IMPACTncd-natural,
+scenario-able) or a latent factor on the innovations — see the cross-cutting note below.
+
 ---
 
 ## 5. Validation harness (the biggest gap — budget real time)
