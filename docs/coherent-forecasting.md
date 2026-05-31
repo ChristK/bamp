@@ -353,6 +353,18 @@ coupling; the alternative — **declared risk-factor covariates** (IMPACTncd-nat
 remains a planned extension (you supply RF trajectories; correlation comes from a named, intervenable
 cause; mechanically just extra design columns + Gaussian priors on the coefficients).
 
+**IMPLEMENTED — the full per-stratum disease tensor** (`bamp_sex_cascade()` / `predict_sex_cascade()`,
+`R/coherent_sex_cascade.R`): composes the two coherent ideas into the
+`[period × age × sex × group × disease]` hazard tensor an NCD microsimulation consumes. A
+`bamp_coherent` model sets the **level** (the stratum all-cause totals, made sex-coherent =
+non-diverging); a `bamp_cascade` within each stratum sets the **composition** (disease shares down the
+taxonomy, with optional `factor=` coupling). Layered (`leaf = stratum-coherent total × cascade
+disease-share`), the tensor is **coherent on every margin** — validated machine-exact on Japan
+(~1e-17): diseases→group (CHD+stroke = CVD), diseases→stratum total, leaf hazards→stratum-total
+hazard for each sex; and the stratum totals stay bounded (male-female gap SD plateaus, not diverges).
+This is the vignette Part-C layering generalised to a taxonomy, and the recommended end-state for
+IMPACTncd. Cascade+factor on a synthetic 30-disease taxonomy fits + predicts in ~25 s.
+
 ---
 
 ## 5. Validation harness (the biggest gap — budget real time)

@@ -30,6 +30,8 @@
 #' @param population a single shared \code{[periods x agegroups]} population matrix.
 #' @param age,period,cohort,periods_per_agegroup model settings, as in \code{\link{bamp_multicause}}.
 #' @param mcmc,order,hyper,prior_scale,seed passed to each \code{\link{bamp_multicause}} fit.
+#' @param factor optional integer: low-rank cross-cause coupling (see \code{\link{bamp_multicause}}),
+#'   applied within each fit that has more shares than \code{factor} (else full Wishart).
 #'
 #' @return object of class \code{apc_cascade}: the fitted group model, the per-group leaf models, the
 #'   taxonomy, and metadata; used by \code{\link{predict_cascade}}.
@@ -38,7 +40,8 @@
 bamp_cascade <- function(taxonomy, cases, population, age = "rw1", period = "rw1", cohort = "rw1",
                          periods_per_agegroup,
                          mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
-                         order = "prevalence", hyper = NULL, prior_scale = TRUE, seed = 1) {
+                         order = "prevalence", hyper = NULL, prior_scale = TRUE, seed = 1,
+                         factor = NULL) {
   if (!is.list(taxonomy) || length(taxonomy) < 2L)
     stop("'taxonomy' must be a named list of >= 2 groups, each a vector of leaf-disease names.")
   if (is.null(names(taxonomy))) names(taxonomy) <- paste0("group", seq_along(taxonomy))
@@ -48,10 +51,14 @@ bamp_cascade <- function(taxonomy, cases, population, age = "rw1", period = "rw1
     stop("names(cases) must be exactly the leaf diseases listed in 'taxonomy'.")
   cases <- lapply(cases, as.matrix)
   hy <- if (is.null(hyper)) list(age = c(1, 0.5), omega = c(2, 1e-4), omega_c = c(2, 1e-4)) else hyper
-  fit_mc <- function(cl)
+  ## factor=R adds low-rank cross-cause coupling within a fit (the cross-cutting drivers); applied
+  ## per fit only where it has enough causes (R < number of shares), else falls back to Wishart.
+  fit_mc <- function(cl) {
+    R <- if (!is.null(factor) && (length(cl) - 1L) > as.integer(factor)) as.integer(factor) else NULL
     bamp_multicause(cl, population, age = age, period = period, cohort = cohort,
                     periods_per_agegroup = periods_per_agegroup, order = order,
-                    mcmc = mcmc, hyper = hy, prior_scale = prior_scale, seed = seed)
+                    mcmc = mcmc, hyper = hy, prior_scale = prior_scale, seed = seed, factor = R)
+  }
 
   ## group level: each group = sum of its leaves; groups partition all-cause
   message("bamp_cascade: fitting group level (", length(taxonomy), " groups) ...")

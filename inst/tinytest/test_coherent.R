@@ -307,3 +307,31 @@ co <- pf$cor_omega                                                 # within-bloc
 expect_true(min(co[1, 2], co[3, 4]) > max(co[1, 3], co[1, 4], co[2, 3], co[2, 4]))
 expect_true(pf$coherence_maxerr < 1e-9)
 expect_error(bamp_multicause(cf, popf, periods_per_agegroup = 1, factor = 4, mcmc = mh))  # R must be < Cm
+
+## ---- cascade with low-rank factor coupling (applied where a fit has enough causes) ----
+e1 <- round(cases * .2); e2 <- round(cases * .2); e3 <- round(cases * .2); e4 <- round(cases * .15)
+e5 <- cases - e1 - e2 - e3 - e4; e5[e5 < 0] <- 0
+cf <- suppressMessages(bamp_cascade(list(A = c("d1", "d2", "d3"), B = c("d4", "d5")),
+   list(d1 = e1, d2 = e2, d3 = e3, d4 = e4, d5 = e5), population, periods_per_agegroup = ppa,
+   factor = 1, mcmc = list(iterations = 500, burn_in = 150, thin = 2)))
+expect_true(predict_cascade(cf, periods = 1)$coherence_maxerr < 1e-9)
+
+## ---- per-sex disease cascade: coherent on BOTH margins (disease + sex) ----
+sc_cases <- list(men   = list(d1 = round(cases * .3), d2 = round(cases * .3)),
+                 women = list(d1 = round(cases * .4), d2 = round(cases * .25)))
+sc_cases$men$d3   <- cases - sc_cases$men$d1   - sc_cases$men$d2;   sc_cases$men$d3[sc_cases$men$d3 < 0]   <- 0
+sc_cases$women$d3 <- cases - sc_cases$women$d1 - sc_cases$women$d2; sc_cases$women$d3[sc_cases$women$d3 < 0] <- 0
+sxc <- suppressMessages(bamp_sex_cascade(list(A = c("d1", "d2"), B = "d3"), sc_cases,
+   list(men = population, women = population), periods_per_agegroup = ppa, deviation = "iid",
+   mcmc_total = list(iterations = 800, burn_in = 300, thin = 2),
+   mcmc_cascade = list(iterations = 600, burn_in = 200, thin = 2)))
+expect_inherits(sxc, "apc_sex_cascade")
+futp <- function(P) rbind(P, P[rep(nrow(P), 2), , drop = FALSE])
+psx <- predict_sex_cascade(sxc, periods = 2, population = list(men = futp(population), women = futp(population)),
+                           hazard = TRUE, period_length = ppa)
+expect_identical(psx$sexes, c("men", "women"))
+expect_true(psx$coherence_maxerr < 1e-9)                          # diseases sum to each sex total
+gAm <- psx$men$d1$samples$rate + psx$men$d2$samples$rate          # group coherence within sex
+expect_true(max(abs(gAm - psx$men$groups$A$samples$rate)) < 1e-9)
+shzw <- Reduce(`+`, lapply(psx$leaves, function(l) psx$women[[l]]$samples$hazard))
+expect_true(max(abs(shzw - psx$women$total$samples$hazard)) < 1e-9)  # leaf hazards sum to sex total hazard

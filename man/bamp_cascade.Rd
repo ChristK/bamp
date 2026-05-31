@@ -16,7 +16,8 @@ bamp_cascade(
   order = "prevalence",
   hyper = NULL,
   prior_scale = TRUE,
-  seed = 1
+  seed = 1,
+  factor = NULL
 )
 }
 \arguments{
@@ -31,6 +32,9 @@ must cover exactly the leaves in \code{taxonomy}. Leaves partition all deaths.}
 \item{age, period, cohort, periods_per_agegroup}{model settings, as in \code{\link{bamp_multicause}}.}
 
 \item{mcmc, order, hyper, prior_scale, seed}{passed to each \code{\link{bamp_multicause}} fit.}
+
+\item{factor}{optional integer: low-rank cross-cause coupling (see \code{\link{bamp_multicause}}),
+applied within each fit that has more shares than \code{factor} (else full Wishart).}
 }
 \value{
 object of class \code{apc_cascade}: the fitted group model, the per-group leaf models, the
