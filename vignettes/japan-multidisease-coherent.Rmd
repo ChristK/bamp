@@ -302,15 +302,71 @@ cat("per-draw max |sum of layered cause rates - sex-coherent total|  (men, women
     signif(c(sum_layered(pc$men, pmc), sum_layered(pc$women, pmc_w)), 2), "\n")
 ```
 
+## Part D — the whole thing in one call
+
+Parts A–C built the tensor by hand. `bamp_sex_cascade()` does it in a single call for a disease
+**taxonomy**: it fits the sex-coherent all-cause total (Part B) and a disease cascade within each sex
+(Part A, nested by group), and `predict_sex_cascade()` layers them. The result is the full
+`[year × age × sex × group × disease]` coherent hazard tensor an NCD microsimulation consumes — here
+with a CVD group (CHD + stroke) and the residual "other".
+
+```{r sex-cascade}
+taxonomy <- list(CVD = c("CHD", "stroke"), other = "other")
+casc <- bamp_sex_cascade(
+  taxonomy,
+  cases = list(men   = list(CHD = men$CHD,   stroke = men$stroke,   other = men$other),
+               women = list(CHD = women$CHD, stroke = women$stroke, other = women$other)),
+  population = list(men = men$pop, women = women$pop),
+  periods_per_agegroup = 5, deviation = "ar1",
+  mcmc_total = mco, mcmc_cascade = mco)
+ten <- predict_sex_cascade(casc, periods = 31, hazard = TRUE, period_length = 1,
+                           population = list(men = men$pop_fut, women = women$pop_fut))
+str(ten$men$CHD$samples$hazard)                    # [year, age, draw] for one (sex, disease) cell
+```
+
+It is coherent on **every** margin at once — diseases sum to their group, groups to each sex's
+all-cause, and the sex totals stay sex-coherent:
+
+```{r sex-cascade-coherence}
+cat("diseases -> sex total (machine exact):", signif(ten$coherence_maxerr, 2), "\n")
+cat("CHD + stroke == CVD group (men):",
+    signif(max(abs(ten$men$CHD$samples$rate + ten$men$stroke$samples$rate -
+                   ten$men$groups$CVD$samples$rate)), 2), "\n")
+hz <- Reduce(`+`, lapply(ten$leaves, function(l) ten$women[[l]]$samples$hazard))
+cat("leaf hazards -> women all-cause hazard:", signif(max(abs(hz - ten$women$total$samples$hazard)), 2), "\n")
+```
+
+```{r sex-cascade-plot, fig.height = 4.6}
+## one disease (CHD) by sex straight from the tensor -- the sexes stay coherent (non-diverging)
+par(mfrow = c(1, 2), mar = c(4, 4, 2.4, 1))
+for (dis in c("CHD", "stroke")) {
+  yl <- range(ten$men[[dis]]$rate[c(1, 3), , A], ten$women[[dis]]$rate[c(1, 3), , A])
+  plot(NA, xlim = c(1995, 2050), ylim = yl, xlab = "year",
+       ylab = paste(dis, "rate (70-74)"), main = paste(dis, "by sex (from the tensor)"))
+  band(years, ten$men[[dis]]$rate[, , A],   "#c0392b", add = TRUE)
+  band(years, ten$women[[dis]]$rate[, , A], "#8e44ad", add = TRUE)
+  abline(v = 2019, lty = 3, col = "grey50")
+  legend("topright", c("men", "women"), col = c("#c0392b", "#8e44ad"), lwd = 2.2, bty = "n")
+}
+par(mfrow = c(1, 1))
+```
+
+Each disease's male/female projection inherits the non-divergence of the all-cause total, the
+diseases sum coherently within each sex, and the cross-cause and cross-sex dependence are all carried
+through — in one call. For dozens of diseases, group them in the taxonomy (each level stays a small
+fit) and add `factor = R` for cross-cutting, risk-factor-driven coupling across groups.
+
 ## Recommended workflow
 
 * **Diseases that compete** → `bamp_multicause()` (cause shares sum to all-cause; cross-cause
   trends coupled; emit additive per-person-year hazards for a microsimulation).
 * **Exhaustive strata (sex, education, …)** → `bamp_coherent()` (shared trend + mean-reverting
   deviation; the between-stratum gap cannot diverge). `S > 2` strata are supported.
-* **Both at once** → layer them: run `bamp_multicause()` within each sex (or stick-break causes on
-  top of a sex-coherent total). See `docs/coherent-forecasting.md` for the nested cascade and the
-  out-of-sample validation harness (`coherence_backtest()`, `select_rho()`).
+* **Many diseases** → `bamp_cascade()` (a disease taxonomy as nested small fits; add `factor = R`
+  for cross-cutting, risk-factor-driven coupling across groups).
+* **Both at once** → `bamp_sex_cascade()` / `predict_sex_cascade()` (Part D): one call for the full
+  `[year × age × sex × group × disease]` coherent tensor. See `docs/coherent-forecasting.md` for the
+  nested cascade and the out-of-sample validation harness (`coherence_backtest()`, `select_rho()`).
 
 The advantage over independent projection is not mainly short-horizon accuracy (the methods are
 comparable there) but **coherence** — the parts add to the whole, the causes move together as the
