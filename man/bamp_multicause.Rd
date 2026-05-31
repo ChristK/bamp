@@ -15,7 +15,8 @@ bamp_multicause(
   mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
   hyper = list(age = c(1, 0.5), omega = c(2, 1e-04), omega_c = c(2, 1e-04)),
   prior_scale = TRUE,
-  seed = 1
+  seed = 1,
+  factor = NULL
 )
 }
 \arguments{
@@ -42,6 +43,14 @@ parameters \code{omega} (period) and \code{omega_c} (cohort), each \code{c(df_ex
 \item{prior_scale}{Sorbye-Rue scaling of intrinsic structure matrices.}
 
 \item{seed}{RNG seed.}
+
+\item{factor}{optional integer \code{R}: use a LOW-RANK factor model for the cross-cause period
+covariance (\eqn{\Sigma=\Lambda\Lambda^\top+\Psi}, \code{R} latent factors) instead of the full
+Wishart. The factors are shared, \emph{cross-cutting} latent drivers (risk-factor proxies) that a
+disease taxonomy/cascade cannot express; they make the coupling identifiable for many causes
+(\code{R}\eqn{\times}\code{C} loadings, not \code{C^2/2} correlations). Posterior-mean loadings are
+returned by \code{\link{predict_multicause}} as \code{loadings}. \code{NULL} (default) keeps the
+full Wishart coupling.}
 }
 \value{
 object of class \code{apc_multicause}: posterior draws (incl. the cross-cause precision

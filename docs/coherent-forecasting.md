@@ -336,8 +336,22 @@ construction (validated machine-exact ~1e-17: leaves→group→all-cause for rat
 hazards). Because each fit is small it scales where a flat multinomial cannot: **30 diseases
 (5 groups × 6) fit + predict end-to-end in ~60 s** on the dense reference engine. It couples trends
 *within* a group; the cross-group, risk-factor-driven coupling (smoking across CVD/cancer/COPD) is
-the tree-orthogonal piece, deferred to **declared risk-factor covariates** (IMPACTncd-natural,
-scenario-able) or a latent factor on the innovations — see the cross-cutting note below.
+the tree-orthogonal piece — see the cross-cutting note below.
+
+**IMPLEMENTED — latent factor cross-cause coupling** (`bamp_multicause(..., factor = R)`): a LOW-RANK
+factor model for the cross-cause period covariance (`Σ = ΛΛ' + Ψ`, `R` latent factors) replacing the
+full Wishart `Ω`. The factors are shared, **cross-cutting** latent drivers (risk-factor proxies) that
+the cascade's tree cannot express, and they make the coupling identifiable for many causes
+(`R×C` loadings, not `C²/2` correlations). Implemented as a one-sweep Bayesian factor analysis of the
+period *increments* (`δ̃ = √s_p·DΦ`, so `δ̃'δ̃ = Φ'K_pΦ`), run *standardised* so the priors are
+scale-appropriate, then `Σ` rescaled; the field draw and projection are unchanged (they just use the
+factor-implied `Ω`). Rotation-invariant (only `Σ` is used), so loadings need no identification.
+Validated: recovers a block (within-factor `0.6-0.9` vs cross-factor `~0.13`) correlation structure —
+including a factor loading a *cross-group* subset — with far fewer parameters; `predict_multicause`
+returns the posterior-mean `loadings`. This is the **latent-factor fallback** for cross-cutting
+coupling; the alternative — **declared risk-factor covariates** (IMPACTncd-natural, scenario-able) —
+remains a planned extension (you supply RF trajectories; correlation comes from a named, intervenable
+cause; mechanically just extra design columns + Gaussian priors on the coefficients).
 
 ---
 

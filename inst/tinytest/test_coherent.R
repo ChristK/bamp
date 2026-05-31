@@ -282,3 +282,28 @@ casc2 <- suppressMessages(bamp_cascade(list(A = c("d1", "d2"), C = "d34"),
 p2 <- predict_cascade(casc2, periods = 1)
 expect_true(p2$coherence_maxerr < 1e-9)
 expect_false(is.null(p2$d34$rate))
+
+## ---- latent factor cross-cause coupling (bamp_multicause factor=R) ----
+set.seed(7); If <- 8; Jf <- 22; Nf <- 40000; Cmf <- 4
+gf <- apply(matrix(rnorm(2 * Jf, 0, 0.2), Jf, 2), 2, cumsum)        # 2 latent RW drivers
+Lf <- matrix(0, Cmf, 2); Lf[1:2, 1] <- 1; Lf[3:4, 2] <- 1          # shares 1,2->f1 ; 3,4->f2
+phif <- scale(gf %*% t(Lf), scale = FALSE)
+muf <- c(.3, -.2, .1, -.3); thf <- matrix(seq(-.4, .4, length.out = If), If, Cmf)
+thAf <- seq(-1.2, 1.2, length.out = If)
+cf <- replicate(5, matrix(0, Jf, If), simplify = FALSE); popf <- matrix(Nf, Jf, If)
+for (j in 1:Jf) for (i in 1:If) {
+  D <- rbinom(1, Nf, plogis(log(.04 / .96) + thAf[i]))
+  pis <- vapply(1:Cmf, function(c) plogis(muf[c] + thf[i, c] + phif[j, c]), 0)
+  sh <- numeric(5); rem <- 1; for (c in 1:Cmf) { sh[c] <- pis[c] * rem; rem <- rem - sh[c] }; sh[5] <- rem
+  sp <- as.numeric(rmultinom(1, D, sh)); for (c in 1:5) cf[[c]][j, i] <- sp[c]
+}
+names(cf) <- paste0("c", 1:5)
+ff <- suppressMessages(bamp_multicause(cf, popf, periods_per_agegroup = 1, order = 1:5, factor = 2,
+        mcmc = list(iterations = 1500, burn_in = 500, thin = 2)))
+expect_equal(ff$model$factor, 2L)
+pf <- predict_multicause(ff, periods = 0)
+expect_equal(dim(pf$loadings), c(4L, 2L))                          # Cm x R loadings reported
+co <- pf$cor_omega                                                 # within-block > cross-block
+expect_true(min(co[1, 2], co[3, 4]) > max(co[1, 3], co[1, 4], co[2, 3], co[2, 4]))
+expect_true(pf$coherence_maxerr < 1e-9)
+expect_error(bamp_multicause(cf, popf, periods_per_agegroup = 1, factor = 4, mcmc = mh))  # R must be < Cm

@@ -41,6 +41,29 @@
   Phi
 }
 
+## one Gibbs sweep of Bayesian factor analysis on the period increments Y (N x Cm,
+## rows ~ N(0, Sigma)), returning the implied LOW-RANK cross-cause precision
+## Omega = Sigma^{-1}, Sigma = Lam Lam' + diag(Psi). This replaces the full Wishart
+## Omega with a few latent factors -- the shared, cross-cutting (cross-group)
+## drivers a disease taxonomy cannot express. Only Sigma is used downstream, and it
+## is rotation-invariant, so the loadings need no identification constraint.
+.mc_fa_omega <- function(Y, Lam, Psi, cprior = 1, a_psi = 2, b_psi = 1) {
+  v <- mean(Y^2) + 1e-12                     # overall increment scale; run FA standardised so the
+  Ys <- Y / sqrt(v)                          # O(1) priors are scale-appropriate, then rescale Sigma
+  N <- nrow(Ys); C <- ncol(Ys); R <- ncol(Lam); Pinv <- 1 / Psi
+  V <- chol2inv(chol(diag(R) + crossprod(Lam, Lam * Pinv)))
+  H <- (Ys * rep(Pinv, each = N)) %*% Lam %*% V + matrix(rnorm(N * R), N, R) %*% chol(V)  # scores
+  HtH <- crossprod(H)
+  for (c in seq_len(C)) {
+    Q <- HtH / Psi[c] + diag(R) / cprior
+    Lam[c, ] <- solve(Q, crossprod(H, Ys[, c]) / Psi[c]) + backsolve(chol(Q), rnorm(R))
+    res <- Ys[, c] - H %*% Lam[c, ]
+    Psi[c] <- 1 / rgamma(1, a_psi + N / 2, b_psi + 0.5 * sum(res^2))
+  }
+  list(Lam = Lam, Psi = Psi,                 # Sigma = v*(LL'+Psi); Omega = Sigma^{-1}
+       Omega = chol2inv(chol(tcrossprod(Lam) + diag(Psi))) / v, loadings = Lam * sqrt(v))
+}
+
 #' Joint multinomial APC model for competing causes (Phase 1 prototype)
 #'
 #' @description
@@ -69,6 +92,13 @@
 #'   parameters \code{omega} (period) and \code{omega_c} (cohort), each \code{c(df_extra, v0)}.
 #' @param prior_scale Sorbye-Rue scaling of intrinsic structure matrices.
 #' @param seed RNG seed.
+#' @param factor optional integer \code{R}: use a LOW-RANK factor model for the cross-cause period
+#'   covariance (\eqn{\Sigma=\Lambda\Lambda^\top+\Psi}, \code{R} latent factors) instead of the full
+#'   Wishart. The factors are shared, \emph{cross-cutting} latent drivers (risk-factor proxies) that a
+#'   disease taxonomy/cascade cannot express; they make the coupling identifiable for many causes
+#'   (\code{R}\eqn{\times}\code{C} loadings, not \code{C^2/2} correlations). Posterior-mean loadings are
+#'   returned by \code{\link{predict_multicause}} as \code{loadings}. \code{NULL} (default) keeps the
+#'   full Wishart coupling.
 #'
 #' @return object of class \code{apc_multicause}: posterior draws (incl. the cross-cause precision
 #'   \code{Omega}), the fitted all-cause total model, and metadata; used by \code{\link{predict_multicause}}.
@@ -78,7 +108,7 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
                             periods_per_agegroup, order = "prevalence",
                             mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
                             hyper = list(age = c(1, 0.5), omega = c(2, 1e-4), omega_c = c(2, 1e-4)),
-                            prior_scale = TRUE, seed = 1) {
+                            prior_scale = TRUE, seed = 1, factor = NULL) {
   if (!is.list(cases) || length(cases) < 2L) stop("'cases' must be a list of >= 2 cause matrices.")
   if (is.null(names(cases))) names(cases) <- paste0("cause", seq_along(cases))
   ## stick-breaking is order-dependent; default to most-prevalent-first so the running
@@ -94,6 +124,13 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   cases <- cases[perm]
   ord_a <- .coh_ord(age); ord_p <- .coh_ord(period); ord_c <- .coh_ord(cohort)
   Cn <- length(cases); Cm <- Cn - 1L                  # number of stick-breaking shares
+  ## optional LOW-RANK factor coupling on the period covariance (cross-cutting drivers)
+  use_factor <- !is.null(factor) && Cm >= 2L
+  if (use_factor) {
+    Rfac <- as.integer(factor)
+    if (Rfac < 1L || Rfac >= Cm)
+      stop("'factor' must be an integer in 1..(number of causes - 2) for a low-rank coupling.")
+  }
   Y <- lapply(cases, function(x) t(as.matrix(x)))     # [age x period]
   Npop <- t(as.matrix(population))
   I <- nrow(Y[[1]]); J <- ncol(Y[[1]]); M <- as.integer(periods_per_agegroup)
@@ -108,6 +145,10 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   Ka <- scl(.pg_Kmat(I, ord_a), ord_a)
   Kp <- scl(.pg_Kmat(J, ord_p), ord_p)
   Kc <- scl(.pg_Kmat(K, ord_c), ord_c)
+  if (use_factor) {                                   # increment operator + scale, so Cov(increments)=Sigma
+    Dop_p <- diff(diag(J), differences = ord_p)
+    sp_p  <- if (prior_scale) .pg_scale(.pg_Kmat(J, ord_p), ord_p) else 1
+  }
 
   ## layout: beta = (mu[Cm], theta^1..^Cm[I], phi (cause-major Cm*J), psi^1..^Cm[K])
   i_mu <- seq_len(Cm)
@@ -162,6 +203,7 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   set.seed(seed)
   beta <- numeric(P)
   kth <- rep(1, Cm); Omega <- diag(Cm); Omega_psi <- diag(Cm)
+  if (use_factor) { Lam_p <- matrix(rnorm(Cm * Rfac, 0, 0.3), Cm, Rfac); Psi_p <- rep(1, Cm) }
   Prec <- build_prec(kth, Omega, Omega_psi)
   iters <- mcmc$iterations; burn <- mcmc$burn_in; thin <- mcmc$thin
   keep <- seq.int(burn + thin, iters, by = thin); nkeep <- length(keep); st <- 0L
@@ -169,6 +211,7 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
               phi = array(0, c(nkeep, J, Cm)), psi = array(0, c(nkeep, K, Cm)),
               kappa_theta = matrix(0, nkeep, Cm),
               Omega = array(0, c(nkeep, Cm, Cm)), Omega_psi = array(0, c(nkeep, Cm, Cm)))
+  if (use_factor) out$Lambda <- array(0, c(nkeep, Cm, Rfac))
   qf <- function(v, Km) sum(v * (Km %*% v))
   for (it in seq_len(iters)) {
     eta <- as.numeric(X %*% beta)
@@ -179,7 +222,12 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
     Psi <- matrix(beta[i_ps_all], K, Cm)               # [cohort x cause]
     for (c in seq_len(Cm))
       kth[c] <- rgamma(1, ha[1] + (I - ord_a) / 2, ha[2] + 0.5 * qf(beta[i_th[[c]]], Ka))
-    Omega     <- stats::rWishart(1, nu0   + rank_p, solve(V0inv   + crossprod(Phi, Kp %*% Phi)))[, , 1]
+    if (use_factor) {                                  # low-rank factor coupling (period)
+      fa <- .mc_fa_omega(sqrt(sp_p) * (Dop_p %*% Phi), Lam_p, Psi_p)
+      Lam_p <- fa$Lam; Psi_p <- fa$Psi; Omega <- fa$Omega; Lam_store <- fa$loadings
+    } else {                                            # full Wishart coupling (period)
+      Omega <- stats::rWishart(1, nu0 + rank_p, solve(V0inv + crossprod(Phi, Kp %*% Phi)))[, , 1]
+    }
     Omega_psi <- stats::rWishart(1, nu0_c + rank_c, solve(V0inv_c + crossprod(Psi, Kc %*% Psi)))[, , 1]
     Prec <- build_prec(kth, Omega, Omega_psi)
     if (it %in% keep) {
@@ -188,6 +236,7 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
       for (c in seq_len(Cm)) out$theta[st, c, ] <- beta[i_th[[c]]]
       out$phi[st, , ] <- Phi; out$psi[st, , ] <- Psi; out$kappa_theta[st, ] <- kth
       out$Omega[st, , ] <- Omega; out$Omega_psi[st, , ] <- Omega_psi
+      if (use_factor) out$Lambda[st, , ] <- Lam_store    # loadings on the original increment scale
     }
   }
 
@@ -201,7 +250,8 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
 
   structure(list(
     samples = out, total = fit_total,
-    model = list(age = age, period = period, cohort = cohort, ord = c(ord_a, ord_p, ord_c)),
+    model = list(age = age, period = period, cohort = cohort, ord = c(ord_a, ord_p, ord_c),
+                 factor = if (use_factor) Rfac else NULL),
     data = list(cases = cases, population = population, periods_per_agegroup = M,
                 I = I, J = J, K = K, causes = names(cases),
                 causes_orig = causes_orig, perm = perm)
@@ -298,6 +348,10 @@ predict_multicause <- function(object, periods = 0, population = NULL,
   if (!is.null(s$Omega_psi)) {
     out$cor_omega_psi <- cormean(s$Omega_psi)         # cohort trend correlation (stick-breaking order)
     dimnames(out$cor_omega_psi) <- list(causes[seq_len(Cm)], causes[seq_len(Cm)])
+  }
+  if (!is.null(s$Lambda)) {                           # factor model: posterior-mean loadings on the latent drivers
+    out$loadings <- apply(s$Lambda, 2:3, mean)
+    dimnames(out$loadings) <- list(causes[seq_len(Cm)], paste0("factor", seq_len(dim(s$Lambda)[3])))
   }
   ## cause rate/hazard entries are accessible by name; report causes in the user's original order
   out$causes <- if (!is.null(dat$causes_orig)) dat$causes_orig else causes
