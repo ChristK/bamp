@@ -61,9 +61,12 @@
 #'   the population at risk).
 #' @param age,period,cohort each \code{"rw1"} or \code{"rw2"}.
 #' @param periods_per_agegroup integer M (cohort index), as in \code{\link{bamp}}.
+#' @param order stick-breaking cause order: \code{"prevalence"} (default; most prevalent first, so the
+#'   running remainders stay large) or a permutation of the cause names/indices. Coherence holds for
+#'   any order; \code{\link{predict_multicause}} returns causes in the original input order.
 #' @param mcmc list with \code{iterations}, \code{burn_in}, \code{thin}.
-#' @param hyper Gamma hyperparameters \code{age}, \code{cohort} (per-cause precisions) and the
-#'   cross-cause Wishart \code{omega = c(df_extra, v0)} (prior \code{Wishart(C-1+df_extra, I/v0)}).
+#' @param hyper Gamma hyperparameter \code{age} (per-cause age precision) and the cross-cause Wishart
+#'   parameters \code{omega} (period) and \code{omega_c} (cohort), each \code{c(df_extra, v0)}.
 #' @param prior_scale Sorbye-Rue scaling of intrinsic structure matrices.
 #' @param seed RNG seed.
 #'
@@ -72,12 +75,23 @@
 #' @seealso \code{\link{predict_multicause}}, \code{\link{bamp_strata}}, \code{\link{reconcile_apc}}
 #' @export
 bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", cohort = "rw1",
-                            periods_per_agegroup,
+                            periods_per_agegroup, order = "prevalence",
                             mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
-                            hyper = list(age = c(1, 0.5), cohort = c(1, 5e-4), omega = c(2, 1e-4)),
+                            hyper = list(age = c(1, 0.5), omega = c(2, 1e-4), omega_c = c(2, 1e-4)),
                             prior_scale = TRUE, seed = 1) {
   if (!is.list(cases) || length(cases) < 2L) stop("'cases' must be a list of >= 2 cause matrices.")
   if (is.null(names(cases))) names(cases) <- paste0("cause", seq_along(cases))
+  ## stick-breaking is order-dependent; default to most-prevalent-first so the running
+  ## remainders stay large (rarest cause = unmodelled reference). Coherence holds for any order.
+  causes_orig <- names(cases)
+  perm <- if (identical(order, "prevalence"))
+            order(vapply(cases, function(x) sum(as.matrix(x)), 0), decreasing = TRUE)
+          else if (is.numeric(order)) as.integer(order)
+          else if (is.character(order) && all(order %in% causes_orig)) match(order, causes_orig)
+          else seq_along(cases)
+  if (!setequal(perm, seq_along(cases)))
+    stop("'order' must be \"prevalence\" or a permutation of the cause names/indices.")
+  cases <- cases[perm]
   ord_a <- .coh_ord(age); ord_p <- .coh_ord(period); ord_c <- .coh_ord(cohort)
   Cn <- length(cases); Cm <- Cn - 1L                  # number of stick-breaking shares
   Y <- lapply(cases, function(x) t(as.matrix(x)))     # [age x period]
@@ -102,7 +116,8 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   i_ph <- lapply(seq_len(Cm), function(c) base_ph + (c - 1L) * J + seq_len(J))  # cause-major
   i_ph_all <- unlist(i_ph)
   base_ps <- base_ph + Cm * J
-  i_ps <- lapply(seq_len(Cm), function(c) base_ps + (c - 1L) * K + seq_len(K))
+  i_ps <- lapply(seq_len(Cm), function(c) base_ps + (c - 1L) * K + seq_len(K))  # cause-major
+  i_ps_all <- unlist(i_ps)
   P <- base_ps + Cm * K
 
   ## explicit design + stacked data over cells (c, i, j)
@@ -126,30 +141,34 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   Arows <- list()
   for (c in seq_len(Cm)) Arows <- c(Arows, list(mkrow(i_th[[c]], 1), mkrow(i_ph[[c]], 1), mkrow(i_ps[[c]], 1)))
   if (ord_p == 2L) for (c in seq_len(Cm)) Arows <- c(Arows, list(mkrow(i_ph[[c]], (1:J) - mean(1:J))))
+  if (ord_c == 2L) for (c in seq_len(Cm)) Arows <- c(Arows, list(mkrow(i_ps[[c]], (1:K) - mean(1:K))))  # pin coupled cohort drift
   A <- do.call(rbind, Arows); tA <- t(A)
 
-  ha <- hyper$age; hc <- hyper$cohort; ho <- if (is.null(hyper$omega)) c(2, 1e-4) else hyper$omega
-  nu0 <- Cm + ho[1]; V0inv <- diag(Cm) * ho[2]; rank_p <- J - ord_p
+  ha <- hyper$age; ho <- if (is.null(hyper$omega)) c(2, 1e-4) else hyper$omega
+  hoc <- if (is.null(hyper$omega_c)) c(2, 1e-4) else hyper$omega_c
+  nu0   <- Cm + ho[1];  V0inv   <- diag(Cm) * ho[2];  rank_p <- J - ord_p
+  nu0_c <- Cm + hoc[1]; V0inv_c <- diag(Cm) * hoc[2]; rank_c <- K - ord_c
   tau_mu <- 1e-2
-  build_prec <- function(kth, nps, Omega) {
+  build_prec <- function(kth, Omega, Omega_psi) {
     Pm <- matrix(0, P, P)
     Pm[cbind(i_mu, i_mu)] <- tau_mu
-    for (c in seq_len(Cm)) { Pm[i_th[[c]], i_th[[c]]] <- kth[c] * Ka; Pm[i_ps[[c]], i_ps[[c]]] <- nps[c] * Kc }
-    Pm[i_ph_all, i_ph_all] <- kronecker(Omega, Kp)     # cross-cause coupled period prior
+    for (c in seq_len(Cm)) Pm[i_th[[c]], i_th[[c]]] <- kth[c] * Ka
+    Pm[i_ph_all, i_ph_all] <- kronecker(Omega, Kp)        # cross-cause coupled PERIOD prior
+    Pm[i_ps_all, i_ps_all] <- kronecker(Omega_psi, Kc)    # cross-cause coupled COHORT prior
     diag(Pm) <- diag(Pm) + 1e-7
     Pm
   }
 
   set.seed(seed)
   beta <- numeric(P)
-  kth <- rep(1, Cm); nps <- rep(1, Cm); Omega <- diag(Cm)
-  Prec <- build_prec(kth, nps, Omega)
+  kth <- rep(1, Cm); Omega <- diag(Cm); Omega_psi <- diag(Cm)
+  Prec <- build_prec(kth, Omega, Omega_psi)
   iters <- mcmc$iterations; burn <- mcmc$burn_in; thin <- mcmc$thin
   keep <- seq.int(burn + thin, iters, by = thin); nkeep <- length(keep); st <- 0L
   out <- list(mu = matrix(0, nkeep, Cm), theta = array(0, c(nkeep, Cm, I)),
-              phi = array(0, c(nkeep, J, Cm)), psi = array(0, c(nkeep, Cm, K)),
-              kappa_theta = matrix(0, nkeep, Cm), nu_psi = matrix(0, nkeep, Cm),
-              Omega = array(0, c(nkeep, Cm, Cm)))
+              phi = array(0, c(nkeep, J, Cm)), psi = array(0, c(nkeep, K, Cm)),
+              kappa_theta = matrix(0, nkeep, Cm),
+              Omega = array(0, c(nkeep, Cm, Cm)), Omega_psi = array(0, c(nkeep, Cm, Cm)))
   qf <- function(v, Km) sum(v * (Km %*% v))
   for (it in seq_len(iters)) {
     eta <- as.numeric(X %*% beta)
@@ -157,18 +176,18 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
     Q <- Xt %*% (X * omega) + Prec
     beta <- .pg_draw_block(Q, bvec, A, tA)
     Phi <- matrix(beta[i_ph_all], J, Cm)               # [period x cause]
-    for (c in seq_len(Cm)) {
+    Psi <- matrix(beta[i_ps_all], K, Cm)               # [cohort x cause]
+    for (c in seq_len(Cm))
       kth[c] <- rgamma(1, ha[1] + (I - ord_a) / 2, ha[2] + 0.5 * qf(beta[i_th[[c]]], Ka))
-      nps[c] <- rgamma(1, hc[1] + (K - ord_c) / 2, hc[2] + 0.5 * qf(beta[i_ps[[c]]], Kc))
-    }
-    Omega <- stats::rWishart(1, nu0 + rank_p, solve(V0inv + crossprod(Phi, Kp %*% Phi)))[, , 1]
-    Prec <- build_prec(kth, nps, Omega)
+    Omega     <- stats::rWishart(1, nu0   + rank_p, solve(V0inv   + crossprod(Phi, Kp %*% Phi)))[, , 1]
+    Omega_psi <- stats::rWishart(1, nu0_c + rank_c, solve(V0inv_c + crossprod(Psi, Kc %*% Psi)))[, , 1]
+    Prec <- build_prec(kth, Omega, Omega_psi)
     if (it %in% keep) {
       st <- st + 1L
       out$mu[st, ] <- beta[i_mu]
-      for (c in seq_len(Cm)) { out$theta[st, c, ] <- beta[i_th[[c]]]; out$psi[st, c, ] <- beta[i_ps[[c]]] }
-      out$phi[st, , ] <- Phi; out$kappa_theta[st, ] <- kth; out$nu_psi[st, ] <- nps
-      out$Omega[st, , ] <- Omega
+      for (c in seq_len(Cm)) out$theta[st, c, ] <- beta[i_th[[c]]]
+      out$phi[st, , ] <- Phi; out$psi[st, , ] <- Psi; out$kappa_theta[st, ] <- kth
+      out$Omega[st, , ] <- Omega; out$Omega_psi[st, , ] <- Omega_psi
     }
   }
 
@@ -184,7 +203,8 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
     samples = out, total = fit_total,
     model = list(age = age, period = period, cohort = cohort, ord = c(ord_a, ord_p, ord_c)),
     data = list(cases = cases, population = population, periods_per_agegroup = M,
-                I = I, J = J, K = K, causes = names(cases))
+                I = I, J = J, K = K, causes = names(cases),
+                causes_orig = causes_orig, perm = perm)
   ), class = "apc_multicause")
 }
 
@@ -232,8 +252,12 @@ predict_multicause <- function(object, periods = 0, population = NULL,
   rate <- lapply(seq_len(Cn), function(c) array(0, c(n2, I, D)))
   for (d in seq_len(D)) {
     Phi <- .mvrw_predict(matrix(s$phi[d, , ], J, Cm), matrix(s$Omega[d, , ], Cm, Cm), ord_p, n1, n2)
-    Psi <- vapply(seq_len(Cm), function(c)
-      .cj_predict_rw(c(s$psi[d, c, ], numeric(K2 - K)), s$nu_psi[d, c], ord_c, K, K2), numeric(K2))
+    if (!is.null(s$Omega_psi)) {                        # cross-cause coupled cohort projection
+      Psi <- .mvrw_predict(matrix(s$psi[d, , ], K, Cm), matrix(s$Omega_psi[d, , ], Cm, Cm), ord_c, K, K2)
+    } else {                                            # old objects: per-cause free RW (nu_psi)
+      Psi <- vapply(seq_len(Cm), function(c)
+        .cj_predict_rw(c(s$psi[d, c, ], numeric(K2 - K)), s$nu_psi[d, c], ord_c, K, K2), numeric(K2))
+    }
     for (i in 1:I) {
       kk <- (I - i) * M + (1:n2)
       pic <- vapply(seq_len(Cm), function(c)
@@ -262,8 +286,64 @@ predict_multicause <- function(object, periods = 0, population = NULL,
 
   summed <- Reduce(`+`, lapply(out[causes], function(e) e$samples$rate))
   out$coherence_maxerr <- max(abs(summed - totrate))
-  om <- apply(s$Omega, 1, function(O) { S <- solve(matrix(O, Cm, Cm)); stats::cov2cor(S) })
-  out$cor_omega <- matrix(rowMeans(om), Cm, Cm)       # posterior-mean cross-cause trend correlation
-  out$causes <- causes
+  ## posterior-mean cross-cause trend correlation (drop-robust at Cm = 1)
+  cormean <- function(Om) {
+    if (Cm == 1L) return(matrix(1, 1, 1))
+    M <- vapply(seq_len(dim(Om)[1]),
+                function(d) stats::cov2cor(solve(matrix(Om[d, , ], Cm, Cm))), numeric(Cm * Cm))
+    matrix(rowMeans(M), Cm, Cm)
+  }
+  out$cor_omega <- cormean(s$Omega)                   # period trend correlation (stick-breaking order)
+  dimnames(out$cor_omega) <- list(causes[seq_len(Cm)], causes[seq_len(Cm)])
+  if (!is.null(s$Omega_psi)) {
+    out$cor_omega_psi <- cormean(s$Omega_psi)         # cohort trend correlation (stick-breaking order)
+    dimnames(out$cor_omega_psi) <- list(causes[seq_len(Cm)], causes[seq_len(Cm)])
+  }
+  ## cause rate/hazard entries are accessible by name; report causes in the user's original order
+  out$causes <- if (!is.null(dat$causes_orig)) dat$causes_orig else causes
   out
+}
+
+
+#' Stick-breaking order sensitivity for a competing-cause model
+#'
+#' @description
+#' Refit \code{\link{bamp_multicause}} under alternative cause orderings and compare the implied
+#' cause-SHARE forecasts (order-invariant in expectation, unlike the raw stick-breaking parameters).
+#' A large discrepancy signals the ordering matters for this data and a more order-symmetric model
+#' may be preferable. The diagnostic detects, it does not prove, order effects; differences at the
+#' Monte-Carlo-noise level are not meaningful (use enough iterations).
+#'
+#' @param object an \code{apc_multicause} object.
+#' @param orders named list of alternative orderings (each a permutation of the original cause names
+#'   or indices); default compares the fitted order against its reverse.
+#' @param periods horizon for the compared share forecast.
+#' @param ... passed to \code{\link{bamp_multicause}} for the refits (use the same \code{mcmc}).
+#'
+#' @return data.frame with, per alternative ordering, the \code{max_abs_share_diff} and
+#'   \code{mean_abs_share_diff} of the posterior-mean cause-share forecast vs the object's ordering.
+#' @seealso \code{\link{bamp_multicause}}
+#' @export
+order_sensitivity <- function(object, orders = NULL, periods = 0, ...) {
+  if (!inherits(object, "apc_multicause")) stop("'object' must come from bamp_multicause().")
+  dat <- object$data
+  cases0 <- dat$cases[order(dat$perm)]; names(cases0) <- dat$causes_orig   # original input order
+  n2 <- dat$J + periods
+  mean_share <- function(fit) {
+    pr <- predict_multicause(fit, periods = periods)
+    vapply(dat$causes_orig, function(nm) {
+      z <- pr[[nm]]$samples$rate / pr$total$samples$rate; z[!is.finite(z)] <- 0
+      apply(z, 1:2, mean)
+    }, matrix(0, n2, dat$I))
+  }
+  base_sh <- mean_share(object)
+  if (is.null(orders)) orders <- list(reverse = rev(dat$causes_orig))
+  do.call(rbind, lapply(seq_along(orders), function(k) {
+    fk <- bamp_multicause(cases0, dat$population, age = object$model$age, period = object$model$period,
+                          cohort = object$model$cohort, periods_per_agegroup = dat$periods_per_agegroup,
+                          order = orders[[k]], ...)
+    d <- abs(mean_share(fk) - base_sh)
+    data.frame(order = if (!is.null(names(orders))) names(orders)[k] else as.character(k),
+               max_abs_share_diff = max(d), mean_abs_share_diff = mean(d), stringsAsFactors = FALSE)
+  }))
 }

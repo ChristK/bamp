@@ -11,8 +11,9 @@ bamp_multicause(
   period = "rw1",
   cohort = "rw1",
   periods_per_agegroup,
+  order = "prevalence",
   mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
-  hyper = list(age = c(1, 0.5), cohort = c(1, 5e-04), omega = c(2, 1e-04)),
+  hyper = list(age = c(1, 0.5), omega = c(2, 1e-04), omega_c = c(2, 1e-04)),
   prior_scale = TRUE,
   seed = 1
 )
@@ -29,10 +30,14 @@ the population at risk).}
 
 \item{periods_per_agegroup}{integer M (cohort index), as in \code{\link{bamp}}.}
 
+\item{order}{stick-breaking cause order: \code{"prevalence"} (default; most prevalent first, so the
+running remainders stay large) or a permutation of the cause names/indices. Coherence holds for
+any order; \code{\link{predict_multicause}} returns causes in the original input order.}
+
 \item{mcmc}{list with \code{iterations}, \code{burn_in}, \code{thin}.}
 
-\item{hyper}{Gamma hyperparameters \code{age}, \code{cohort} (per-cause precisions) and the
-cross-cause Wishart \code{omega = c(df_extra, v0)} (prior \code{Wishart(C-1+df_extra, I/v0)}).}
+\item{hyper}{Gamma hyperparameter \code{age} (per-cause age precision) and the cross-cause Wishart
+parameters \code{omega} (period) and \code{omega_c} (cohort), each \code{c(df_extra, v0)}.}
 
 \item{prior_scale}{Sorbye-Rue scaling of intrinsic structure matrices.}
 

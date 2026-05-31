@@ -13,11 +13,14 @@ bamp_coherent(
   periods_per_agegroup,
   deviation = c("iid", "ar1"),
   rho = 0,
+  deviation_cohort = c("none", "iid", "ar1"),
+  rho_c = 0,
   mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
   hyper = list(age = c(1, 0.5), period = c(1, 5e-04), cohort = c(1, 5e-04), dev = c(1,
-    0.05)),
+    0.05), rho = c(1, 1), dev_cohort = c(1, 0.05)),
   prior_scale = TRUE,
-  seed = 1
+  seed = 1,
+  mh_sd_rho = 0.3
 )
 }
 \arguments{
@@ -31,19 +34,29 @@ same dimensions (as for \code{\link{bamp_strata}}).}
 \item{deviation}{prior for the sex deviation: \code{"iid"} (ridge; instant reversion) or
 \code{"ar1"} (gradual reversion, with \code{rho}). Both are proper and mean-reverting.}
 
-\item{rho}{AR1 coefficient for \code{deviation = "ar1"} (\code{0 <= rho < 1}); the coherence
-dial -- larger \code{rho} allows the sex gap to persist longer before reverting. Ignored for
-\code{"iid"}.}
+\item{rho}{AR1 coefficient for \code{deviation = "ar1"}. Now a SAMPLED parameter (the value passed
+is the starting point); the posterior draws are returned in \code{samples$rho}. \code{0 <= rho < 1}.
+Ignored for \code{"iid"} (fixed at 0).}
+
+\item{deviation_cohort}{optionally also place a sex deviation on the COHORT axis: \code{"none"}
+(default; identical to before), \code{"iid"} or \code{"ar1"} (with \code{rho_c}). Mean-reverting,
+sum-to-zero over cohorts.}
+
+\item{rho_c}{fixed AR1 coefficient for the cohort deviation (\code{0 <= rho_c < 1}); used only when
+\code{deviation_cohort = "ar1"}.}
 
 \item{mcmc}{list with \code{iterations}, \code{burn_in}, \code{thin}.}
 
-\item{hyper}{list of Gamma hyperparameters \code{c(a, b)} for the precisions
-\code{age}, \code{period}, \code{cohort} and \code{dev} (the deviation precision).}
+\item{hyper}{list of Gamma hyperparameters \code{c(a, b)} for the precisions \code{age},
+\code{period}, \code{cohort}, \code{dev} (period deviation) and \code{dev_cohort}, and the
+\code{rho} Beta-prior parameters.}
 
 \item{prior_scale}{scale intrinsic structure matrices to unit generalised variance
 (Sorbye-Rue), as in the main engine.}
 
 \item{seed}{RNG seed.}
+
+\item{mh_sd_rho}{proposal standard deviation (logit scale) for the Metropolis update of \code{rho}.}
 }
 \value{
 object of class \code{apc_coherent}: posterior draws of all effects and precisions,

@@ -188,6 +188,56 @@ for (j in 1:Jc) for (i in 1:Ic) {
   a1[j, i] <- sp[1]; a2[j, i] <- sp[2]; a3[j, i] <- sp[3]
 }
 fr <- suppressMessages(bamp_multicause(list(a = a1, b = a2, c = a3), popc, periods_per_agegroup = 1,
-        age = "rw1", period = "rw1", cohort = "rw1",
+        age = "rw1", period = "rw1", cohort = "rw1", order = 1:3,   # keep simulated stick-break order
         mcmc = list(iterations = 3500, burn_in = 1000, thin = 2)))
-expect_true(predict_multicause(fr, periods = 0)$cor_omega[1, 2] < -0.2)  # cause replacement recovered
+# reference by dimname (robust to ordering); a<->b were simulated with corr -0.8
+expect_true(predict_multicause(fr, periods = 0)$cor_omega["a", "b"] < -0.2)  # cause replacement recovered
+
+## ---- Hardening: sampled rho, cohort deviation, cohort coupling, ordering ----
+mh <- list(iterations = 800, burn_in = 200, thin = 2)
+# coh-rho: iid keeps rho at 0 (backward-compatible RNG path); ar1 samples & stores rho
+f_iid <- suppressMessages(bamp_coherent(list(f = ca, m = cb), list(f = pa, m = pb),
+   periods_per_agegroup = ppa, deviation = "iid", mcmc = mh))
+expect_true(all(f_iid$samples$rho == 0))
+f_ar <- suppressMessages(bamp_coherent(list(f = ca, m = cb), list(f = pa, m = pb),
+   periods_per_agegroup = ppa, deviation = "ar1", mcmc = mh))
+expect_equal(length(f_ar$samples$rho), length(f_ar$samples$mu0))
+expect_true(all(f_ar$samples$rho >= 0 & f_ar$samples$rho < 1))
+expect_true(is.finite(f_ar$model$rho_accept) && f_ar$model$rho_accept > 0)
+# coh-rho determinant correctness: constrained rho log-posterior peaks near truth at long J
+ar1p <- bamp:::.ar1_prec
+lp <- function(de, lam, r) { J <- length(de); Z <- svd(matrix(1, 1, J), nu = 0, nv = J)$v[, 2:J, drop = FALSE]
+  sum(log(diag(chol(crossprod(Z, ar1p(J, r) %*% Z))))) - 0.5 * lam * sum(de * (ar1p(J, r) %*% de)) }
+g <- seq(0.02, 0.96, 0.02)
+set.seed(2); deH <- as.numeric(arima.sim(list(ar = 0.9), 40, sd = 0.25)); deH <- deH - mean(deH)
+expect_true(g[which.max(sapply(g, function(r) lp(deH, 1 / var(diff(deH)), r)))] > 0.6)
+set.seed(3); deL <- as.numeric(arima.sim(list(ar = 0.0), 40, sd = 0.25)); deL <- deL - mean(deL)
+expect_true(g[which.max(sapply(g, function(r) lp(deL, 1 / var(diff(deL)), r)))] < 0.3)
+
+# coh-cohdev: default off has no dpsi; turning it on runs and stays coherent
+expect_true(is.null(f_iid$samples$dpsi))
+f_cd <- suppressMessages(bamp_coherent(list(f = ca, m = cb), list(f = pa, m = pb),
+   periods_per_agegroup = ppa, deviation_cohort = "iid", mcmc = mh))
+expect_true(isTRUE(f_cd$model$use_dpsi) && !is.null(f_cd$samples$dpsi))
+pcd <- predict_coherent(f_cd, periods = 2)
+npc <- dim(pcd$total$samples$rate)[1]                       # total covers observed periods (pop=NULL)
+rf <- pcd$f$samples$rate[seq_len(npc), , ]; rm_ <- pcd$m$samples$rate[seq_len(npc), , ]
+expect_true(all(pcd$total$samples$rate >= pmin(rf, rm_) - 1e-9 &
+                pcd$total$samples$rate <= pmax(rf, rm_) + 1e-9))
+
+# mc-cohcoupling: cohort cross-cause correlation reported; Cm=1 (C=2) path works
+mc3 <- suppressMessages(bamp_multicause(list(x = round(cases * .5), y = round(cases * .3),
+   z = cases - round(cases * .5) - round(cases * .3)), population, periods_per_agegroup = ppa, mcmc = mh))
+expect_equal(dim(predict_multicause(mc3, periods = 2)$cor_omega_psi), c(2L, 2L))
+mc2 <- suppressMessages(bamp_multicause(list(x = round(cases * .5), y = cases - round(cases * .5)),
+   population, periods_per_agegroup = ppa, mcmc = mh))
+expect_equal(dim(predict_multicause(mc2, periods = 1)$cor_omega), c(1L, 1L))
+
+# mc-order: prevalence reorders for fitting but predict reports original order; access by name correct
+mco <- suppressMessages(bamp_multicause(list(rare = round(cases * .1), big = round(cases * .6),
+   mid = cases - round(cases * .1) - round(cases * .6)), population, periods_per_agegroup = ppa,
+   order = "prevalence", mcmc = mh))
+expect_identical(mco$data$causes[1], "big")               # most prevalent fitted first
+ppo <- predict_multicause(mco, periods = 1)
+expect_identical(ppo$causes, c("rare", "big", "mid"))     # original order reported
+expect_false(is.null(ppo$rare$rate))                      # access by name correct
