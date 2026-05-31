@@ -14,7 +14,7 @@ Description: Bayesian Age-Period-Cohort Modeling and Prediction using efficient 
 License: GPL-3
 Encoding: UTF-8
 Depends: R (>= 3.5.0)
-Imports: coda, graphics, parallel, stats, abind, Matrix
+Imports: coda, graphics, parallel, stats, abind, Matrix, utils
 LazyData: true
 VignetteBuilder: knitr, R.rsp
 Suggests: knitr, rmarkdown, R.rsp, tinytest
