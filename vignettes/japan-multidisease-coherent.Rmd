@@ -234,6 +234,74 @@ cat(sprintf("mean male-female log-gap (70-74)  2020 -> 2050:  coherent %.2f -> %
             gap_mean(pm$samples$pr, pw$samples$pr, 56)))
 ```
 
+## Part C — both at once: causes *within* coherent sexes
+
+The two ideas **compose by layering**: take the sex-coherent all-cause total from Part B and split
+each sex's total into causes using the cause shares from Part A (fit per sex). The result is a
+hazard tensor `[age x year x sex x cause]` that is coherent on **both** margins — the causes sum to
+each sex's total (cause coherence) *and* the sex totals do not diverge (sex coherence) — while
+carrying the cross-cause dependence. This is exactly the object a competing-risk microsimulation
+needs.
+
+```{r layer-fit}
+## women's competing-cause model (men's `fit_mc` is from Part A)
+fit_mc_w <- bamp_multicause(list(CHD = women$CHD, stroke = women$stroke, other = women$other),
+                            women$pop, age = "rw1", period = "rw1", cohort = "rw1",
+                            periods_per_agegroup = 5, order = 1:3, mcmc = mco)
+pmc_w <- predict_multicause(fit_mc_w, periods = 31, population = women$pop_fut,
+                            hazard = TRUE, period_length = 1)
+
+## layer: cause rate = sex-coherent total (Part B)  x  cause share within sex (Part A)
+layer_cause <- function(pc_sex, pmc_sex, nm) {
+  D <- min(dim(pc_sex$samples$rate)[3], dim(pmc_sex$total$samples$rate)[3])
+  sh <- pmc_sex[[nm]]$samples$rate[, , seq_len(D)] / pmc_sex$total$samples$rate[, , seq_len(D)]
+  sh[!is.finite(sh)] <- 0
+  apply(pc_sex$samples$rate[, , seq_len(D)] * sh, 1:2, median)     # [period, age] layered median rate
+}
+lay <- list(
+  men   = sapply(c("CHD","stroke","other"), function(nm) layer_cause(pc$men,   pmc,   nm)[, A]),
+  women = sapply(c("CHD","stroke","other"), function(nm) layer_cause(pc$women, pmc_w, nm)[, A]))
+```
+
+```{r plot-stack, fig.height = 4.7}
+scol <- adjustcolor(c("#c0392b", "#2980b9", "#27ae60"), 0.85)
+stack_area <- function(M, main, ymax) {            # M: [period x cause] medians
+  cum <- t(apply(M, 1, cumsum))
+  plot(NA, xlim = c(1995, 2050), ylim = c(0, ymax), xlab = "year",
+       ylab = "mortality rate (age 70-74)", main = main)
+  prev <- rep(0, nrow(M))
+  for (k in seq_len(ncol(M))) {
+    polygon(c(years, rev(years)), c(prev, rev(cum[, k])), col = scol[k], border = NA); prev <- cum[, k] }
+  abline(v = 2019, lty = 3, col = "grey30")
+}
+ymax <- max(rowSums(lay$men), rowSums(lay$women)) * 1.02
+par(mfrow = c(1, 2), mar = c(4, 4, 2.4, 1))
+stack_area(lay$men,   "Men: coherent cause composition",   ymax)
+legend("topright", c("CHD","stroke","other"), fill = scol, bty = "n", cex = 0.85)
+stack_area(lay$women, "Women: coherent cause composition", ymax)
+par(mfrow = c(1, 1))
+```
+
+Each panel's **total height is the sex-coherent all-cause rate** (so the men's and women's stacks
+stay plausibly related into 2050, inheriting the non-divergence of Part B), and the coloured bands
+are the **cause-coherent decomposition** (they sum to that height by construction). Six
+fully-independent (cause × sex) models would give neither guarantee — the bands would not sum to a
+sensible total and the male/female totals would drift apart. The layered hazards sum to the
+sex-coherent total **exactly, every posterior draw** (the cause shares sum to 1 by construction):
+
+```{r layer-coherence}
+sum_layered <- function(pc_sex, pmc_sex) {
+  D <- min(dim(pc_sex$samples$rate)[3], dim(pmc_sex$total$samples$rate)[3])
+  s <- Reduce(`+`, lapply(c("CHD","stroke","other"), function(nm) {
+    sh <- pmc_sex[[nm]]$samples$rate[, , seq_len(D)] / pmc_sex$total$samples$rate[, , seq_len(D)]
+    sh[!is.finite(sh)] <- 0
+    pc_sex$samples$rate[, , seq_len(D)] * sh }))
+  max(abs(s - pc_sex$samples$rate[, , seq_len(D)]))
+}
+cat("per-draw max |sum of layered cause rates - sex-coherent total|  (men, women):",
+    signif(c(sum_layered(pc$men, pmc), sum_layered(pc$women, pmc_w)), 2), "\n")
+```
+
 ## Recommended workflow
 
 * **Diseases that compete** → `bamp_multicause()` (cause shares sum to all-cause; cross-cause
