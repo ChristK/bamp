@@ -392,7 +392,24 @@ Coherence gains are invisible to the wrong metric:
   **cause** prototype; sparse + C port (current sampler is dense O(P³) — fine for an S = 2 reference,
   not production). Strategy-0 cause model and the Laplace-MH/ASIS re-derivation remain for the
   production engine.
-- **Phase 2 (validation).** The §5 harness, before any C port.
+- **Phase 2 (validation) — IMPLEMENTED** (branch `phase0-coherent-forecasting`). The §5 harness:
+  `energy_score()` / `variogram_score()` (proper *multivariate* scoring rules, verified against
+  analytic values; `R/scoring.R`); `coherence_backtest()` (hold out the last *h* periods, refit each
+  model, score the **joint** sex-by-age forecast against held-out truth — coherent vs the no-coupling
+  **independent** baseline vs the Phase 0 `totalshare`; reports joint energy/variogram, a *marginal*
+  energy for contrast, and a `gap_growth` non-divergence diagnostic; `R/coherence_backtest.R`);
+  `select_rho()` (data-driven AR1 coherence strength by held-out score — answers the Jallbjorn "how
+  strong should coherence be" question from data). tinytest-covered (41/41 total).
+  **Findings:** (a) *no bug* — on the rate scale coherent and independent forecast equally well
+  (in-sample/held-out RMSE within ~1e-5); the large *lograte* gap on `data(apc)` was a rare-cell clip
+  artifact (rates 0–0.001 with zeros), so `scale = "rate"` is the default. (b) **Accuracy is a tie**
+  (joint energy within ~0.4% on controlled data) — exactly the literature's "at least as accurate"
+  (Hyndman 2013). (c) The coherent model's value is **non-divergence**: across a held-out block the
+  projected sex-gap variance grows ~1.5× vs ~3.9× for independent fits (2.6× slower divergence),
+  consistent with the Phase 1 long-horizon result. So coherence buys plausibility/non-divergence, not
+  short-horizon error — and the harness measures both honestly. **Still open in §5:** hold-out-a-stratum
+  is degenerate for S = 2 (a fully-missing sex has an unidentified level) — meaningful only for the
+  multi-stratum / rare-cell regime, deferred with it.
 - **Phase 3 (high, dominant cost, gated on need).** Port to C after the R reference validates
   to ~1e-10; scope a sparse GMRF solver here, not as an afterthought.
 

@@ -132,3 +132,29 @@ expect_inherits(fc_ar, "apc_coherent")
 expect_error(bamp_coherent(list(female = ca, male = cb), list(female = pa, male = pb),
                            age = "rw1", period = "rw1", cohort = "rw1",
                            periods_per_agegroup = ppa, deviation = "ar1", rho = 1.2))
+
+## ---- Phase 2: multivariate scoring rules + backtest harness ----
+# proper scoring rules against hand-computed values
+expect_equal(energy_score(c(0, 0), matrix(c(3, 4), 1, 2)), 5, tolerance = 1e-9)
+expect_equal(energy_score(c(1, 0), rbind(c(0, 0), c(2, 0))), 0.5, tolerance = 1e-9)
+expect_equal(variogram_score(c(0, 2), rbind(c(0, 0)), p = 1), 4, tolerance = 1e-9)
+expect_equal(energy_score(c(2, 5, 1), rbind(c(2, 5, 1), c(2, 5, 1))), 0)        # perfect
+expect_error(energy_score(c(0, 0), matrix(1, 1, 3)))                            # dim mismatch
+
+# backtest harness runs and returns a valid comparison (tools, not the science)
+bt <- suppressMessages(coherence_backtest(
+  list(female = ca, male = cb), list(female = pa, male = pb),
+  holdout = 2, periods_per_agegroup = ppa, models = c("coherent", "independent"),
+  scale = "rate", mcmc_coherent = list(iterations = 1500, burn_in = 500, thin = 2),
+  mcmc_bamp = list(number_of_iterations = 1500, burn_in = 500, step = 2, tuning = 200)))
+expect_true(all(c("model", "energy", "variogram", "gap_growth") %in% names(bt)))
+expect_equal(nrow(bt), 2L)
+expect_true(all(is.finite(bt$energy)) && all(bt$energy >= 0))
+
+# data-driven rho selection returns a value from the grid
+sr <- suppressMessages(select_rho(
+  list(female = ca, male = cb), list(female = pa, male = pb),
+  holdout = 2, periods_per_agegroup = ppa, rho_grid = c(0, 0.6),
+  mcmc_coherent = list(iterations = 1200, burn_in = 400, thin = 2)))
+expect_true(sr$best_rho %in% c(0, 0.6))
+expect_equal(nrow(sr$table), 2L)
