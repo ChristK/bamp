@@ -13,7 +13,8 @@ predict_apc(
   hazard = FALSE,
   period_length = 1,
   damping = 1,
-  var_damping = 1
+  var_damping = 1,
+  trend_window = NULL
 )
 }
 \arguments{
@@ -43,7 +44,12 @@ forecasts.}
 
 \item{var_damping}{innovation-variance shrinkage in (0,1\]: the per-step forecast innovation sd is
 multiplied by \code{var_damping^(h-1)} at horizon \code{h}, so predictive bands stop fanning out
-without bound. \code{1} (default) leaves the bands unchanged.
+without bound. \code{1} (default) leaves the bands unchanged.}
+
+\item{trend_window}{for an RW2 period prior, base the forecast drift on the mean increment over the
+last \code{trend_window} fitted periods (a recent/post-break slope) instead of the single last
+increment (A5). \code{NULL} (default) keeps the standard RW2 continuation. See
+\code{\link{changepoint_window}} to choose it from a detected structural break.
 Only used when \code{hazard=TRUE}.}
 }
 \value{

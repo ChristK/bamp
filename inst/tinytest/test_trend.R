@@ -49,3 +49,36 @@ expect_equal(nrow(s$table), 2L)
 expect_true(all(c("period", "cohort", "energy", "crps") %in% names(s$table)))
 expect_true(s$best$period %in% c("rw1", "rw2"))
 expect_true(s$table$energy[1] <= s$table$energy[2])   # sorted by score (default energy)
+
+## A5: changepoint_window detects the post-break segment length
+v <- c(seq(0, 1, length.out = 10), seq(1, -0.5, length.out = 8)[-1])
+expect_true(abs(changepoint_window(v) - 8) <= 2)
+expect_equal(changepoint_window(1:3), 2L)             # too short -> J-1
+
+## A5/A4 on a stall-then-flat period: fit RW2 and exercise the trend controls
+set.seed(45); Js <- 18; pop2 <- matrix(2e5, Js, I)
+kt <- c(cumsum(rep(-0.06, 10)), rep(-0.6, 8))
+b2 <- plogis(-3 + rep(seq(-1, 1, length.out = I), each = Js) + rep(kt, I))
+t2 <- matrix(rbinom(I * Js, as.integer(pop2), b2), Js, I)
+m2 <- round(t2 * .5); w2 <- t2 - m2
+fco2 <- suppressMessages(bamp_coherent(list(m = m2, w = w2), list(m = pop2, w = pop2),
+         periods_per_agegroup = 1, age = "rw1", period = "rw2", cohort = "rw1", mcmc = mc))
+H2 <- 10; L2 <- Js + H2
+impr <- function(p) mean(log(p$m$rate["50%", Js, ])) - mean(log(p$m$rate["50%", L2, ]))
+set.seed(7); plong <- predict_coherent(fco2, periods = H2, trend_window = Js - 1)
+set.seed(7); pcp   <- predict_coherent(fco2, periods = H2, detect_changepoint = TRUE)
+expect_true(impr(pcp) < impr(plong))                 # post-break window improves less than full-window
+
+## A4: exogenous per-age drift diverges the age trends
+ad <- rep(0, I); ad[1] <- -0.05; ad[I] <- 0.05
+set.seed(7); p0 <- predict_coherent(fco2, periods = H2)
+set.seed(7); pA <- predict_coherent(fco2, periods = H2, age_drift = ad)
+expect_true(mean(log(pA$m$rate["50%", L2, 1])) < mean(log(p0$m$rate["50%", L2, 1])))
+expect_true(mean(log(pA$m$rate["50%", L2, I])) > mean(log(p0$m$rate["50%", L2, I])))
+expect_error(predict_coherent(fco2, periods = 1, age_drift = rep(0, I + 1)))
+
+## A4/A5 in multicause keep coherence exact
+fmc2 <- suppressMessages(bamp_multicause(list(a = m2, b = round(w2 * .5), c = w2 - round(w2 * .5)),
+         pop2, periods_per_agegroup = 1, order = 1:3, period = "rw2", mcmc = mc))
+pm2 <- predict_multicause(fmc2, periods = H2, detect_changepoint = TRUE, age_drift = ad)
+expect_true(pm2$coherence_maxerr < 1e-7)

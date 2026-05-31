@@ -315,6 +315,12 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
 #'   extrapolation (the all-cause total \emph{and} the cause shares), as in \code{\link{predict_apc}}.
 #'   Defaults \code{1, 1} reproduce the free random walk; \code{damping < 1} curbs long-horizon
 #'   over-extrapolation, \code{var_damping < 1} stops the predictive bands fanning out without bound.
+#' @param trend_window,detect_changepoint base the all-cause forecast drift on a recent/post-break
+#'   window instead of the last increment (A5); \code{detect_changepoint = TRUE} sets the window from the
+#'   total's period effect via \code{\link{changepoint_window}}. \code{NULL}/\code{FALSE} keep RW2.
+#' @param age_drift optional per-age (length I) exogenous forecast drift applied to the all-cause total
+#'   on the logit scale (A4); the cause shares are recomputed from the adjusted total, so coherence is
+#'   preserved. \code{NULL} leaves the forecast unchanged.
 #'
 #' @return list with one entry per cause and a \code{total} entry (quantiles of \code{rate}, and
 #'   \code{hazard} if requested, on the \code{[period, agegroup]} grid, plus \code{samples}); the
@@ -325,9 +331,13 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
 predict_multicause <- function(object, periods = 0, population = NULL,
                                quantiles = c(0.05, 0.5, 0.95),
                                hazard = FALSE, period_length = 1,
-                               damping = 1, var_damping = 1) {
+                               damping = 1, var_damping = 1,
+                               trend_window = NULL, detect_changepoint = FALSE, age_drift = NULL) {
   if (!(damping >= 0 && damping <= 1)) stop("'damping' must be in [0, 1].")
   if (!(var_damping > 0 && var_damping <= 1)) stop("'var_damping' must be in (0, 1].")
+  if (isTRUE(detect_changepoint) && is.null(trend_window) && !is.null(object$total$samples$period))
+    trend_window <- changepoint_window(Reduce(`+`, lapply(object$total$samples$period, colMeans)) /
+                                       length(object$total$samples$period))
   if (!inherits(object, "apc_multicause")) stop("'object' must come from bamp_multicause().")
   hazard <- isTRUE(hazard)
   s <- object$samples; md <- object$model; dat <- object$data
@@ -338,8 +348,14 @@ predict_multicause <- function(object, periods = 0, population = NULL,
 
   ## all-cause total rate (separate fit), projected
   pt <- predict_apc(object$total, periods = periods, population = population,
-                    damping = damping, var_damping = var_damping)
+                    damping = damping, var_damping = var_damping, trend_window = trend_window)
   totrate <- pt$samples$pr                            # [period, age, Dtot]
+  if (!is.null(age_drift)) {                          # A4: exogenous per-age forecast drift on the
+    if (length(age_drift) != I) stop("'age_drift' must have one value per age group (length I).")
+    fut <- pmax(seq_len(n2) - n1, 0)                  #   total (logit scale); shares stay coherent
+    for (i in seq_len(I)) totrate[, i, ] <- stats::plogis(stats::qlogis(
+      pmin(pmax(totrate[, i, ], 1e-12), 1 - 1e-12)) + age_drift[i] * fut)
+  }
   D <- min(dim(s$phi)[1], dim(totrate)[3])
   totrate <- totrate[, , seq_len(D), drop = FALSE]
 

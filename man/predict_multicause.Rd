@@ -12,7 +12,10 @@ predict_multicause(
   hazard = FALSE,
   period_length = 1,
   damping = 1,
-  var_damping = 1
+  var_damping = 1,
+  trend_window = NULL,
+  detect_changepoint = FALSE,
+  age_drift = NULL
 )
 }
 \arguments{
@@ -32,6 +35,14 @@ predict_multicause(
 extrapolation (the all-cause total \emph{and} the cause shares), as in \code{\link{predict_apc}}.
 Defaults \code{1, 1} reproduce the free random walk; \code{damping < 1} curbs long-horizon
 over-extrapolation, \code{var_damping < 1} stops the predictive bands fanning out without bound.}
+
+\item{trend_window, detect_changepoint}{base the all-cause forecast drift on a recent/post-break
+window instead of the last increment (A5); \code{detect_changepoint = TRUE} sets the window from the
+total's period effect via \code{\link{changepoint_window}}. \code{NULL}/\code{FALSE} keep RW2.}
+
+\item{age_drift}{optional per-age (length I) exogenous forecast drift applied to the all-cause total
+on the logit scale (A4); the cause shares are recomputed from the adjusted total, so coherence is
+preserved. \code{NULL} leaves the forecast unchanged.}
 }
 \value{
 list with one entry per cause and a \code{total} entry (quantiles of \code{rate}, and

@@ -12,7 +12,10 @@ predict_coherent(
   hazard = FALSE,
   period_length = 1,
   damping = 1,
-  var_damping = 1
+  var_damping = 1,
+  trend_window = NULL,
+  detect_changepoint = FALSE,
+  age_drift = NULL
 )
 }
 \arguments{
@@ -32,6 +35,19 @@ per-stratum cumulative hazard \eqn{-\log(1-\mathrm{rate})/\mathrm{period\_length
 \item{damping, var_damping}{trend-damping and innovation-variance shrinkage for the shared period/
 cohort extrapolation, as in \code{\link{predict_apc}}. Defaults \code{1, 1} reproduce the free
 random walk. The mean-reverting sex deviation is unaffected (it already reverts via \code{rho}).}
+
+\item{trend_window}{for an RW2 period prior, base the forecast drift on the mean increment over the
+last \code{trend_window} fitted periods (a recent/post-break slope) instead of the single last
+increment (A5). \code{NULL} keeps the standard RW2 continuation.}
+
+\item{detect_changepoint}{if \code{TRUE}, set \code{trend_window} automatically to the post-break
+segment of the posterior-mean period effect via \code{\link{changepoint_window}} -- handles a
+structural break (e.g. a mortality-improvement slowdown) by forecasting from the recent regime.}
+
+\item{age_drift}{optional numeric vector (length = number of age groups) of \emph{exogenous} per-age
+forecast drifts added on the logit scale as \code{age_drift[i] * horizon} (A4). The fitted model is
+shared-period APC; this injects age-specific improvement rates (e.g. from external demographic
+assumptions) the APC structure cannot itself produce. \code{NULL} leaves the forecast unchanged.}
 }
 \value{
 list with one entry per sex and a \code{total} entry (quantiles of \code{rate}, and

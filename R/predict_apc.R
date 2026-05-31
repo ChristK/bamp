@@ -19,6 +19,10 @@
 #' @param var_damping innovation-variance shrinkage in (0,1\]: the per-step forecast innovation sd is
 #' multiplied by \code{var_damping^(h-1)} at horizon \code{h}, so predictive bands stop fanning out
 #' without bound. \code{1} (default) leaves the bands unchanged.
+#' @param trend_window for an RW2 period prior, base the forecast drift on the mean increment over the
+#' last \code{trend_window} fitted periods (a recent/post-break slope) instead of the single last
+#' increment (A5). \code{NULL} (default) keeps the standard RW2 continuation. See
+#' \code{\link{changepoint_window}} to choose it from a detected structural break.
 #' Only used when \code{hazard=TRUE}.
 #'
 #' @description Prediction of rates and, if possible, cases from the Bayesian age-period-cohort model
@@ -58,9 +62,10 @@
 #' pred <- predict_apc(model, periods=1)
 #' plot(pred$pr[2,11,], main="Predicted rate per agegroup", ylab="p")
 #' }
-predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0.95), update=FALSE, hazard=FALSE, period_length=1, damping=1, var_damping=1){
+predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0.95), update=FALSE, hazard=FALSE, period_length=1, damping=1, var_damping=1, trend_window=NULL){
   if (!(is.numeric(damping) && length(damping)==1L && damping>=0 && damping<=1)) stop("'damping' must be in [0, 1].")
   if (!(is.numeric(var_damping) && length(var_damping)==1L && var_damping>0 && var_damping<=1)) stop("'var_damping' must be in (0, 1].")
+  if (!is.null(trend_window) && !(is.numeric(trend_window) && length(trend_window)==1L && trend_window>=1)) stop("'trend_window' must be NULL or a positive integer.")
   ksi_prognose <-
     function(prepi, vdb, noa, nop, nop2, noc, zmode){
       my<-prepi[1]
@@ -84,7 +89,7 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     }
   
   predict_rw <-
-    function(prepi, rw, n1, n2, damp=1, vdamp=1){
+    function(prepi, rw, n1, n2, damp=1, vdamp=1, dwin=NULL){
       lambda<-prepi[1]
       phi<-prepi[-1]
       # nothing to extrapolate when there are no future steps (n2==n1). Guard the
@@ -92,7 +97,8 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
       # c(n1+1, n1) and wrongly append/overwrite a step. This matters for
       # predict_apc(periods=0) (retrospective model checking), where n2==n1.
       # damp (A1) damps the RW2 drift; vdamp (A3) shrinks the per-step innovation
-      # sd geometrically. damp=1, vdamp=1 reproduce the free random walk exactly.
+      # sd geometrically; dwin (A5) bases the RW2 drift on the mean increment over
+      # the last dwin periods. damp=1, vdamp=1, dwin=NULL reproduce the free RW.
       if(n2 > n1){
         if(rw == 1){
           for(i in (n1+1):n2){
@@ -100,7 +106,13 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
           }
         }
 
-        if(rw == 2){
+        if(rw == 2 && !is.null(dwin)){
+          w <- max(1L, min(dwin, n1-1L)); g <- mean(diff(phi[(n1-w):n1]))
+          for(i in (n1+1):n2){
+            phi[i] <- phi[i-1] + g + (rnorm(1, mean = 0, sd = 1)/sqrt(lambda))*vdamp^(i-n1-1)
+            g <- g*damp
+          }
+        } else if(rw == 2){
           for(i in (n1+1):n2){
             phi[i] <- (rnorm(1, mean = 0, sd = 1)/sqrt(lambda))*vdamp^(i-n1-1) + phi[i-1] + damp*(phi[i-1] - phi[i-2])
           }
@@ -135,7 +147,7 @@ predict_apc<-function(object, periods=0, population=NULL, quantiles=c(0.05,0.5,0
     )
     ch<-length(object$samples$period)
       prep<-parallel::mclapply(1:ch, function(i,samples)cbind(object$samples$period_parameter[[i]],object$samples$period[[i]]), samples)
-      phi<-parallel::mclapply(prep, function(prepi, rw, n1, n2, damp, vdamp){t(apply(prepi, 1, predict_rw, rw, n1, n2, damp, vdamp))}, rwp, n1, n2, damping, var_damping)
+      phi<-parallel::mclapply(prep, function(prepi, rw, n1, n2, damp, vdamp, dwin){t(apply(prepi, 1, predict_rw, rw, n1, n2, damp, vdamp, dwin))}, rwp, n1, n2, damping, var_damping, trend_window)
   }
   
   if (!object$model$cohort=="")

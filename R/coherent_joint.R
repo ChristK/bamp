@@ -45,14 +45,47 @@
 ## horizons. `var_damp` in (0,1] geometrically shrinks the per-step innovation sd
 ## so the predictive bands stop fanning out without bound. Defaults (1,1) reproduce
 ## the previous free random walk exactly.
-.cj_predict_rw <- function(vec, lambda, rw, n1, n2, damp = 1, var_damp = 1) {
-  if (n2 > n1) for (i in (n1 + 1):n2) {
-    sdk <- (1 / sqrt(lambda)) * var_damp^(i - n1 - 1)
-    vec[i] <- if (rw == 2) vec[i - 1] + damp * (vec[i - 1] - vec[i - 2]) + rnorm(1, 0, sdk)
-              else                      vec[i - 1]                       + rnorm(1, 0, sdk)
+.cj_predict_rw <- function(vec, lambda, rw, n1, n2, damp = 1, var_damp = 1, drift_window = NULL) {
+  if (n2 > n1) {
+    if (rw == 2 && !is.null(drift_window)) {              # A5: drift from a recent/post-break window
+      w <- max(1L, min(drift_window, n1 - 1L))
+      g <- mean(diff(vec[(n1 - w):n1]))                  # smoothed initial slope (not the last jump)
+      for (i in (n1 + 1):n2) {
+        vec[i] <- vec[i - 1] + g + rnorm(1, 0, (1 / sqrt(lambda)) * var_damp^(i - n1 - 1))
+        g <- g * damp                                    # damped trend on the windowed slope
+      }
+    } else for (i in (n1 + 1):n2) {
+      sdk <- (1 / sqrt(lambda)) * var_damp^(i - n1 - 1)
+      vec[i] <- if (rw == 2) vec[i - 1] + damp * (vec[i - 1] - vec[i - 2]) + rnorm(1, 0, sdk)
+                else                      vec[i - 1]                       + rnorm(1, 0, sdk)
+    }
   }
   vec
 }
+
+#' Post-break window of a 1-D trend via a single changepoint
+#'
+#' @description
+#' Locate the dominant changepoint in a trend (e.g. a fitted period effect) by segmented least squares
+#' over interior breakpoints, and return the number of post-break points. That length is the natural
+#' \code{trend_window} for forecasting from the recent regime after a structural break (A5) -- pass it
+#' to \code{\link{predict_apc}} / \code{\link{predict_coherent}} / \code{\link{predict_multicause}}.
+#'
+#' @param vec numeric trend vector (e.g. \code{colMeans(fit$samples$phi)}).
+#' @param min_seg minimum segment length on each side of the break.
+#' @return integer: the number of points after the detected changepoint.
+#' @export
+changepoint_window <- function(vec, min_seg = 3L) {
+  vec <- as.numeric(vec); J <- length(vec)
+  if (J < 2L * min_seg) return(J - 1L)
+  t <- seq_len(J)
+  sse <- function(idx) { if (length(idx) < 2L) return(Inf)
+    sum(stats::lm.fit(cbind(1, t[idx]), vec[idx])$residuals^2) }
+  cps <- min_seg:(J - min_seg)
+  tot <- vapply(cps, function(k) sse(1:k) + sse((k + 1):J), numeric(1))
+  J - cps[which.min(tot)]                                # number of post-break periods
+}
+.cj_changepoint_window <- changepoint_window
 
 ## mean-reverting AR1 extrapolation of the sex DEVIATION (rho=0 -> reverts to 0
 ## immediately; |rho|<1 -> reverts gradually). This is what stops the sex gap
@@ -316,6 +349,16 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
 #' @param damping,var_damping trend-damping and innovation-variance shrinkage for the shared period/
 #'   cohort extrapolation, as in \code{\link{predict_apc}}. Defaults \code{1, 1} reproduce the free
 #'   random walk. The mean-reverting sex deviation is unaffected (it already reverts via \code{rho}).
+#' @param trend_window for an RW2 period prior, base the forecast drift on the mean increment over the
+#'   last \code{trend_window} fitted periods (a recent/post-break slope) instead of the single last
+#'   increment (A5). \code{NULL} keeps the standard RW2 continuation.
+#' @param detect_changepoint if \code{TRUE}, set \code{trend_window} automatically to the post-break
+#'   segment of the posterior-mean period effect via \code{\link{changepoint_window}} -- handles a
+#'   structural break (e.g. a mortality-improvement slowdown) by forecasting from the recent regime.
+#' @param age_drift optional numeric vector (length = number of age groups) of \emph{exogenous} per-age
+#'   forecast drifts added on the logit scale as \code{age_drift[i] * horizon} (A4). The fitted model is
+#'   shared-period APC; this injects age-specific improvement rates (e.g. from external demographic
+#'   assumptions) the APC structure cannot itself produce. \code{NULL} leaves the forecast unchanged.
 #'
 #' @return list with one entry per sex and a \code{total} entry (quantiles of \code{rate}, and
 #'   \code{hazard} if requested, on the \code{[period, agegroup]} grid, plus \code{samples}); plus
@@ -326,7 +369,8 @@ bamp_coherent <- function(cases, population, age = "rw1", period = "rw1", cohort
 predict_coherent <- function(object, periods = 0, population = NULL,
                              quantiles = c(0.05, 0.5, 0.95),
                              hazard = FALSE, period_length = 1,
-                             damping = 1, var_damping = 1) {
+                             damping = 1, var_damping = 1,
+                             trend_window = NULL, detect_changepoint = FALSE, age_drift = NULL) {
   if (!inherits(object, "apc_coherent")) stop("'object' must come from bamp_coherent().")
   hazard <- isTRUE(hazard)
   if (!(damping >= 0 && damping <= 1)) stop("'damping' must be in [0, 1].")
@@ -340,11 +384,16 @@ predict_coherent <- function(object, periods = 0, population = NULL,
   n1 <- J; n2 <- J + periods; K2 <- (I - 1) * M + n2          # = coh(1, n2)
   D <- length(s$mu0); sgn <- c(1, -1)
   rho_vec <- if (!is.null(s$rho)) s$rho else rep(md$rho, D)   # per-draw rho (old objects: fixed)
+  dw <- if (isTRUE(detect_changepoint)) .cj_changepoint_window(colMeans(s$phi)) else trend_window  # A5
+  if (!is.null(age_drift)) {                                  # A4: exogenous per-age forecast drift
+    if (length(age_drift) != I) stop("'age_drift' must have one value per age group (length I).")
+    fut <- pmax(seq_len(n2) - n1, 0)                         # horizon index, 0 in-sample
+  }
 
   rateF <- rateM <- array(0, c(n2, I, D))
   dev_ext <- matrix(0, n2, D)
   for (d in seq_len(D)) {
-    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2, damping, var_damping)
+    ph <- .cj_predict_rw(c(s$phi[d, ], numeric(n2 - n1)), s$lambda_phi[d], ord_p, n1, n2, damping, var_damping, dw)
     ps <- .cj_predict_rw(c(s$psi[d, ], numeric(K2 - K)),  s$nu_psi[d],    ord_c, K, K2, damping, var_damping)
     de <- .cj_predict_ar(c(s$delta[d, ], numeric(n2 - n1)), s$lambda_d[d], rho_vec[d], n1, n2)
     dev_ext[, d] <- de
@@ -354,8 +403,9 @@ predict_coherent <- function(object, periods = 0, population = NULL,
       kk <- (I - i) * M + (1:n2)
       base <- s$mu0[d] + ph + ps[kk]
       cohdev <- if (!is.null(dc)) dc[kk] else 0      # cohort-axis sex deviation (mean-reverting)
-      etaF <- base + s$a[d, 1] + s$theta[d, 1, i] + sgn[1] * (de + cohdev)
-      etaM <- base + s$a[d, 2] + s$theta[d, 2, i] + sgn[2] * (de + cohdev)
+      adr <- if (!is.null(age_drift)) age_drift[i] * fut else 0      # A4 per-age forecast drift
+      etaF <- base + s$a[d, 1] + s$theta[d, 1, i] + sgn[1] * (de + cohdev) + adr
+      etaM <- base + s$a[d, 2] + s$theta[d, 2, i] + sgn[2] * (de + cohdev) + adr
       rateF[, i, d] <- 1 / (1 + exp(-etaF))
       rateM[, i, d] <- 1 / (1 + exp(-etaM))
     }
