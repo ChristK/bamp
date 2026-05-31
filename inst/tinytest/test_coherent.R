@@ -233,6 +233,15 @@ mc2 <- suppressMessages(bamp_multicause(list(x = round(cases * .5), y = cases - 
    population, periods_per_agegroup = ppa, mcmc = mh))
 expect_equal(dim(predict_multicause(mc2, periods = 1)$cor_omega), c(1L, 1L))
 
+# mc-engine: sparse engine is the same model as dense (coherent; recovers matching cross-cause cor)
+mcS <- suppressMessages(bamp_multicause(list(x = round(cases * .5), y = round(cases * .3),
+   z = cases - round(cases * .5) - round(cases * .3)), population, periods_per_agegroup = ppa,
+   order = 1:3, engine = "sparse", mcmc = mh))
+pmcS <- predict_multicause(mcS, periods = 1)
+expect_true(pmcS$coherence_maxerr < 1e-9)                 # sparse path coherent by construction
+expect_equal(dim(pmcS$cor_omega), c(2L, 2L))              # cross-cause coupling reported
+expect_error(bamp_multicause(list(x = cases, y = cases), population, engine = "nope"))
+
 # mc-order: prevalence reorders for fitting but predict reports original order; access by name correct
 mco <- suppressMessages(bamp_multicause(list(rare = round(cases * .1), big = round(cases * .6),
    mid = cases - round(cases * .1) - round(cases * .6)), population, periods_per_agegroup = ppa,

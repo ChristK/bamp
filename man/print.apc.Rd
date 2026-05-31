@@ -5,7 +5,7 @@
 \alias{print}
 \title{Print apc objects}
 \usage{
-\method{print}{apc}(x, ...)
+print.apc(x, ...)
 }
 \arguments{
 \item{x}{apc object}

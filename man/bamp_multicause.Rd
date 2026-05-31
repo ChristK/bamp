@@ -16,7 +16,8 @@ bamp_multicause(
   hyper = list(age = c(1, 0.5), omega = c(2, 1e-04), omega_c = c(2, 1e-04)),
   prior_scale = TRUE,
   seed = 1,
-  factor = NULL
+  factor = NULL,
+  engine = c("dense", "sparse")
 )
 }
 \arguments{
@@ -51,6 +52,12 @@ disease taxonomy/cascade cannot express; they make the coupling identifiable for
 (\code{R}\eqn{\times}\code{C} loadings, not \code{C^2/2} correlations). Posterior-mean loadings are
 returned by \code{\link{predict_multicause}} as \code{loadings}. \code{NULL} (default) keeps the
 full Wishart coupling.}
+
+\item{engine}{\code{"dense"} (default) or \code{"sparse"}. The sparse engine assembles the
+one-block precision sparsely and uses a sparse Cholesky (Matrix package) -- much faster for many
+causes (the dense \eqn{O(P^3)} Cholesky is the bottleneck). Same posterior; draws differ from the
+dense path (a fill-reducing permutation reorders the RNG), so results match in distribution, not
+bit-for-bit.}
 }
 \value{
 object of class \code{apc_multicause}: posterior draws (incl. the cross-cause precision

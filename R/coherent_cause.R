@@ -99,6 +99,11 @@
 #'   (\code{R}\eqn{\times}\code{C} loadings, not \code{C^2/2} correlations). Posterior-mean loadings are
 #'   returned by \code{\link{predict_multicause}} as \code{loadings}. \code{NULL} (default) keeps the
 #'   full Wishart coupling.
+#' @param engine \code{"dense"} (default) or \code{"sparse"}. The sparse engine assembles the
+#'   one-block precision sparsely and uses a sparse Cholesky (Matrix package) -- much faster for many
+#'   causes (the dense \eqn{O(P^3)} Cholesky is the bottleneck). Same posterior; draws differ from the
+#'   dense path (a fill-reducing permutation reorders the RNG), so results match in distribution, not
+#'   bit-for-bit.
 #'
 #' @return object of class \code{apc_multicause}: posterior draws (incl. the cross-cause precision
 #'   \code{Omega}), the fitted all-cause total model, and metadata; used by \code{\link{predict_multicause}}.
@@ -108,7 +113,8 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
                             periods_per_agegroup, order = "prevalence",
                             mcmc = list(iterations = 4000, burn_in = 1000, thin = 2),
                             hyper = list(age = c(1, 0.5), omega = c(2, 1e-4), omega_c = c(2, 1e-4)),
-                            prior_scale = TRUE, seed = 1, factor = NULL) {
+                            prior_scale = TRUE, seed = 1, factor = NULL,
+                            engine = c("dense", "sparse")) {
   if (!is.list(cases) || length(cases) < 2L) stop("'cases' must be a list of >= 2 cause matrices.")
   if (is.null(names(cases))) names(cases) <- paste0("cause", seq_along(cases))
   ## stick-breaking is order-dependent; default to most-prevalent-first so the running
@@ -124,6 +130,9 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   cases <- cases[perm]
   ord_a <- .coh_ord(age); ord_p <- .coh_ord(period); ord_c <- .coh_ord(cohort)
   Cn <- length(cases); Cm <- Cn - 1L                  # number of stick-breaking shares
+  engine <- match.arg(engine)                         # 'sparse' = sparse Cholesky one-block draw
+  if (engine == "sparse" && !requireNamespace("Matrix", quietly = TRUE))
+    stop("engine = 'sparse' requires the Matrix package.")
   ## optional LOW-RANK factor coupling on the period covariance (cross-cutting drivers)
   use_factor <- !is.null(factor) && Cm >= 2L
   if (use_factor) {
@@ -164,18 +173,28 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   ## explicit design + stacked data over cells (c, i, j)
   grid <- expand.grid(j = 1:J, i = 1:I, c = 1:Cm)
   n <- nrow(grid); kcell <- (I - grid$i) * M + grid$j
-  X <- matrix(0, n, P)
-  X[cbind(seq_len(n), i_mu[grid$c])] <- 1
-  X[cbind(seq_len(n), vapply(seq_len(n), function(r) i_th[[grid$c[r]]][grid$i[r]], 1L))] <- 1
-  X[cbind(seq_len(n), vapply(seq_len(n), function(r) i_ph[[grid$c[r]]][grid$j[r]], 1L))] <- 1
-  X[cbind(seq_len(n), vapply(seq_len(n), function(r) i_ps[[grid$c[r]]][kcell[r]], 1L))] <- 1
+  col_mu <- i_mu[grid$c]                                            # the 4 non-zero design columns/cell
+  col_th <- vapply(seq_len(n), function(r) i_th[[grid$c[r]]][grid$i[r]], 1L)
+  col_ph <- vapply(seq_len(n), function(r) i_ph[[grid$c[r]]][grid$j[r]], 1L)
+  col_ps <- vapply(seq_len(n), function(r) i_ps[[grid$c[r]]][kcell[r]], 1L)
   yv <- Nv <- numeric(n)
   for (c in seq_len(Cm)) {
     sel <- grid$c == c
     yv[sel] <- Y[[c]][cbind(grid$i[sel], grid$j[sel])]
     Nv[sel] <- Rl[[c]][cbind(grid$i[sel], grid$j[sel])]
   }
-  Xt <- t(X); bvec <- as.numeric(Xt %*% (yv - Nv / 2))
+  if (engine == "sparse") {                                        # sparse design + banded structure matrices
+    Xs <- Matrix::sparseMatrix(i = rep(seq_len(n), 4L), j = c(col_mu, col_th, col_ph, col_ps),
+                               x = 1, dims = c(n, P))
+    bvec <- as.numeric(Matrix::crossprod(Xs, yv - Nv / 2))
+    Ka_s <- Matrix::Matrix(Ka, sparse = TRUE); Kp_s <- Matrix::Matrix(Kp, sparse = TRUE)
+    Kc_s <- Matrix::Matrix(Kc, sparse = TRUE)
+  } else {
+    X <- matrix(0, n, P)
+    X[cbind(seq_len(n), col_mu)] <- 1; X[cbind(seq_len(n), col_th)] <- 1
+    X[cbind(seq_len(n), col_ph)] <- 1; X[cbind(seq_len(n), col_ps)] <- 1
+    Xt <- t(X); bvec <- as.numeric(Xt %*% (yv - Nv / 2))
+  }
 
   ## sum-to-zero per effect per cause (+ RW2 period zero-slope per cause)
   mkrow <- function(idx, val) { r <- numeric(P); r[idx] <- val; r }
@@ -199,12 +218,20 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
     diag(Pm) <- diag(Pm) + 1e-7
     Pm
   }
+  ## sparse Prec: contiguous blocks (mu | theta | phi cause-major | psi cause-major); the
+  ## kronecker(Omega, Kp_s) period/cohort blocks are banded-in-K and dense-across-cause.
+  build_prec_sparse <- function(kth, Omega, Omega_psi)
+    Matrix::bdiag(Matrix::Diagonal(Cm, tau_mu),
+                  Matrix::bdiag(lapply(seq_len(Cm), function(c) kth[c] * Ka_s)),
+                  kronecker(Matrix::Matrix(Omega, sparse = TRUE), Kp_s),
+                  kronecker(Matrix::Matrix(Omega_psi, sparse = TRUE), Kc_s)) +
+      Matrix::Diagonal(P, 1e-7)
 
   set.seed(seed)
   beta <- numeric(P)
   kth <- rep(1, Cm); Omega <- diag(Cm); Omega_psi <- diag(Cm)
   if (use_factor) { Lam_p <- matrix(rnorm(Cm * Rfac, 0, 0.3), Cm, Rfac); Psi_p <- rep(1, Cm) }
-  Prec <- build_prec(kth, Omega, Omega_psi)
+  if (engine == "dense") Prec <- build_prec(kth, Omega, Omega_psi)
   iters <- mcmc$iterations; burn <- mcmc$burn_in; thin <- mcmc$thin
   keep <- seq.int(burn + thin, iters, by = thin); nkeep <- length(keep); st <- 0L
   out <- list(mu = matrix(0, nkeep, Cm), theta = array(0, c(nkeep, Cm, I)),
@@ -214,10 +241,18 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
   if (use_factor) out$Lambda <- array(0, c(nkeep, Cm, Rfac))
   qf <- function(v, Km) sum(v * (Km %*% v))
   for (it in seq_len(iters)) {
-    eta <- as.numeric(X %*% beta)
-    omega <- .pg_rpg(Nv, eta)
-    Q <- Xt %*% (X * omega) + Prec
-    beta <- .pg_draw_block(Q, bvec, A, tA)
+    if (engine == "sparse") {
+      eta <- as.numeric(Xs %*% beta)
+      omega <- .pg_rpg(Nv, eta)
+      Qs <- Matrix::crossprod(Xs, Matrix::Diagonal(x = omega) %*% Xs) +
+            build_prec_sparse(kth, Omega, Omega_psi)
+      beta <- .pg_draw_block_sparse(Qs, bvec, A, tA)
+    } else {
+      eta <- as.numeric(X %*% beta)
+      omega <- .pg_rpg(Nv, eta)
+      Q <- Xt %*% (X * omega) + Prec
+      beta <- .pg_draw_block(Q, bvec, A, tA)
+    }
     Phi <- matrix(beta[i_ph_all], J, Cm)               # [period x cause]
     Psi <- matrix(beta[i_ps_all], K, Cm)               # [cohort x cause]
     for (c in seq_len(Cm))
@@ -229,7 +264,7 @@ bamp_multicause <- function(cases, population, age = "rw1", period = "rw1", coho
       Omega <- stats::rWishart(1, nu0 + rank_p, solve(V0inv + crossprod(Phi, Kp %*% Phi)))[, , 1]
     }
     Omega_psi <- stats::rWishart(1, nu0_c + rank_c, solve(V0inv_c + crossprod(Psi, Kc %*% Psi)))[, , 1]
-    Prec <- build_prec(kth, Omega, Omega_psi)
+    if (engine == "dense") Prec <- build_prec(kth, Omega, Omega_psi)
     if (it %in% keep) {
       st <- st + 1L
       out$mu[st, ] <- beta[i_mu]
