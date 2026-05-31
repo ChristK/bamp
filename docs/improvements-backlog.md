@@ -35,20 +35,20 @@ Tick `[x]` the items you want implemented, then tell me (or just say the IDs, e.
 
 ## C. Validation / calibration  *(is the projection actually right?)*
 - [x] **C1** Interval coverage / PIT calibration metric (are the 95% bands 95%?) — S — **high** — ✅ shipped (calibration)
-- [x] **C2** Extend the backtest harness to multicause + cascade (currently sex-only) — M
-- [x] **C3** Rolling-origin (multiple origins), not a single holdout — S
+- [x] **C2** Extend the backtest harness to multicause + cascade (currently sex-only) — M — ✅ shipped (multicause_backtest/cascade_backtest)
+- [x] **C3** Rolling-origin (multiple origins), not a single holdout — S — ✅ shipped (n_origins/window)
 - [x] **C4** Run the backtest on real England mortality data + report — M — **high**
-- [x] **C5** Baseline comparisons (Lee–Carter, naïve, independent APC) — M
+- [x] **C5** Baseline comparisons (Lee–Carter, naïve, independent APC) — M — ✅ shipped (forecast_leecarter/forecast_naive/independent)
 - [x] **C6** Marginal CRPS / log-score complements to the multivariate scores — S — ✅ shipped (crps_sample/logs_sample)
-- [x] **C7** Per-disease automated calibration report — M
+- [x] **C7** Per-disease automated calibration report — M — ✅ shipped (per_cause breakdown)
 
 ## D. Sampler diagnostics / robustness  *(running 30 diseases × strata)*
 - [x] **D1** R-hat / ESS reported in coherent / multicause / cascade (none today) — S — ✅ shipped (bamp_diagnostics)
 - [x] **D2** Multi-chain support + parallel chains — M
-- [x] **D3** Automated non-convergence flagging across many fits — S
+- [x] **D3** Automated non-convergence flagging across many fits — S — ✅ shipped (convergence_report)
 - [x] **D4** Trace / diagnostic plots for the new samplers — S — ✅ shipped (bamp_traceplot)
 - [x] **D5** Adaptive tuning of the ρ Metropolis step size — S
-- [x] **D6** Rare-disease / zero-cell leaf-share stress test — S
+- [x] **D6** Rare-disease / zero-cell leaf-share stress test — S — ✅ shipped (test_backtest)
 
 ## E. External integration / outputs  *(handoff to IMPACTncd)*
 - [x] **E1** Optional reconcile to an *external* official total (ONS / GBD), not just the internal fit — M
@@ -72,7 +72,7 @@ Tick `[x]` the items you want implemented, then tell me (or just say the IDs, e.
 
 ## H. Usability / packaging
 - [x] **H1** Plot methods for the coherent / cascade objects — S
-- [x] **H2** One-call convergence + validation summary report — S
+- [x] **H2** One-call convergence + validation summary report — S — ✅ shipped (validation_report)
 - [x] **H3** CRAN-clean `R CMD check` (Matrix, vignettes, examples) — M
 - [x] **H4** Consolidated user guide tying the pieces together — S
 
