@@ -387,10 +387,12 @@ Coherence gains are invisible to the wrong metric:
   Validated: in-sample fitted rates recover empirical (corr ~0.99); projected sex-gap variance is
   **flat across horizon (×1.02 over 10 periods)** while two independent `bamp` fits diverge (×5.4,
   3.2× wider at h=10); the population-weighted total is coherent by construction. tinytest-covered
-  (31/31 incl. Phase 1). **Deferred:** cohort sex-deviation; sampling `rho` (currently fixed); `S > 2`
-  (the `±delta` contrast generalises to a `contr.sum` deviation); sparse + C port (current sampler is
-  dense O(P³) — fine for an S = 2 reference, not production); the Laplace-MH/ASIS re-derivation for the
-  production engine.
+  (31/31 incl. Phase 1). **HARDENED** (commits on branch, design+adversarially-verified in
+  `docs/hardening-plan.md`): `rho` is now **sampled** (determinant-correct logit-MH); an optional
+  **cohort-axis deviation** (`deviation_cohort=`, default off = bit-exact); and **`S > 2`** strata via a
+  contr.sum period-deviation general sampler (S=2 legacy path unchanged). **Still deferred:** sparse-GMRF
+  solver + native-C port (the two large performance efforts — current sampler is dense O(P³), fine as a
+  reference, not production); the Laplace-MH/ASIS re-derivation for the production engine.
 - **Phase 1 (R engine, competing CAUSES) — PROTOTYPE IMPLEMENTED** (branch
   `phase0-coherent-forecasting`). `bamp_multicause()` / `predict_multicause()` (`R/coherent_cause.R`):
   the Strategy-0 statistical cause model. The deaths are stick-broken into `C-1` conditional
@@ -402,8 +404,11 @@ Coherence gains are invisible to the wrong metric:
   Phase 0 `bamp_strata` fallback and independent fits cannot represent: on simulated data with a true
   innovation correlation of −0.8, the model recovers −0.71 (90% CrI [−0.88, −0.45], excludes 0). The
   correlation is carried into projection (shares forecast with `Omega`-correlated innovations). Same
-  dense-Gibbs reference design (no ASIS/Laplace-MH). tinytest-covered (46/46 total). **Deferred:**
-  cross-cause coupling of age/cohort (period-only now); sampling order-invariance; sparse + C port.
+  dense-Gibbs reference design (no ASIS/Laplace-MH). **HARDENED:** the **cohort** trends are now also
+  cross-cause coupled (second Wishart `Omega_psi`, `K_c ⊗ Omega_psi`; `cor_omega_psi` reported); and a
+  **prevalence ordering** default + `order_sensitivity()` diagnostic (predict returns causes in the
+  user's original order). tinytest-covered. **Still deferred:** age cross-cause coupling (off the
+  forecast axis); sparse-GMRF + native-C port.
 - **Phase 2 (validation) — IMPLEMENTED** (branch `phase0-coherent-forecasting`). The §5 harness:
   `energy_score()` / `variogram_score()` (proper *multivariate* scoring rules, verified against
   analytic values; `R/scoring.R`); `coherence_backtest()` (hold out the last *h* periods, refit each
