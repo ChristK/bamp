@@ -158,3 +158,36 @@ sr <- suppressMessages(select_rho(
   mcmc_coherent = list(iterations = 1200, burn_in = 400, thin = 2)))
 expect_true(sr$best_rho %in% c(0, 0.6))
 expect_equal(nrow(sr$table), 2L)
+
+## ---- Phase 1 cause: joint multinomial competing-cause model ----
+mc <- suppressMessages(bamp_multicause(
+  list(ihd = round(cases * 0.5), stroke = round(cases * 0.3),
+       other = cases - round(cases * 0.5) - round(cases * 0.3)), population,
+  age = "rw1", period = "rw1", cohort = "rw1", periods_per_agegroup = ppa,
+  mcmc = list(iterations = 2000, burn_in = 600, thin = 2)))
+expect_inherits(mc, "apc_multicause")
+pmc <- predict_multicause(mc, periods = 2, hazard = TRUE, period_length = ppa)
+# coherence by construction: cause rates sum to the all-cause total (machine exact)
+expect_true(pmc$coherence_maxerr < 1e-9)
+# cause-specific hazards sum to the all-cause hazard
+sumhz <- Reduce(`+`, lapply(pmc$causes, function(nm) pmc[[nm]]$samples$hazard))
+expect_true(max(abs(sumhz - pmc$total$samples$hazard)) < 1e-9)
+expect_equal(dim(pmc$cor_omega), c(2L, 2L))
+
+# cross-cause correlation recovery: simulated cause-replacement (negative) is identified
+set.seed(3); Ic <- 8; Jc <- 14; Nc <- 40000
+Lc <- chol(0.25^2 * matrix(c(1, -0.8, -0.8, 1), 2, 2))
+ph <- matrix(0, Jc, 2); for (j in 2:Jc) ph[j, ] <- ph[j - 1, ] + as.numeric(rnorm(2) %*% Lc)
+muc <- c(0.2, -0.3); thc <- cbind(seq(-.5, .5, length.out = Ic), seq(.3, -.3, length.out = Ic))
+thA <- seq(-1.2, 1.2, length.out = Ic); phiT <- -0.04 * (1:Jc); phiT <- phiT - mean(phiT)
+a1 <- a2 <- a3 <- matrix(0, Jc, Ic); popc <- matrix(Nc, Jc, Ic)
+for (j in 1:Jc) for (i in 1:Ic) {
+  tr <- plogis(log(0.03 / 0.97) + thA[i] + phiT[j])
+  p1 <- plogis(muc[1] + thc[i, 1] + ph[j, 1]); p2 <- plogis(muc[2] + thc[i, 2] + ph[j, 2])
+  sp <- as.numeric(rmultinom(1, rbinom(1, Nc, tr), c(p1, (1 - p1) * p2, (1 - p1) * (1 - p2))))
+  a1[j, i] <- sp[1]; a2[j, i] <- sp[2]; a3[j, i] <- sp[3]
+}
+fr <- suppressMessages(bamp_multicause(list(a = a1, b = a2, c = a3), popc, periods_per_agegroup = 1,
+        age = "rw1", period = "rw1", cohort = "rw1",
+        mcmc = list(iterations = 3500, burn_in = 1000, thin = 2)))
+expect_true(predict_multicause(fr, periods = 0)$cor_omega[1, 2] < -0.2)  # cause replacement recovered

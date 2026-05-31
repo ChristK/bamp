@@ -388,10 +388,22 @@ Coherence gains are invisible to the wrong metric:
   **flat across horizon (×1.02 over 10 periods)** while two independent `bamp` fits diverge (×5.4,
   3.2× wider at h=10); the population-weighted total is coherent by construction. tinytest-covered
   (31/31 incl. Phase 1). **Deferred:** cohort sex-deviation; sampling `rho` (currently fixed); `S > 2`
-  (the `±delta` contrast generalises to a `contr.sum` deviation); the stick-breaking multinomial
-  **cause** prototype; sparse + C port (current sampler is dense O(P³) — fine for an S = 2 reference,
-  not production). Strategy-0 cause model and the Laplace-MH/ASIS re-derivation remain for the
+  (the `±delta` contrast generalises to a `contr.sum` deviation); sparse + C port (current sampler is
+  dense O(P³) — fine for an S = 2 reference, not production); the Laplace-MH/ASIS re-derivation for the
   production engine.
+- **Phase 1 (R engine, competing CAUSES) — PROTOTYPE IMPLEMENTED** (branch
+  `phase0-coherent-forecasting`). `bamp_multicause()` / `predict_multicause()` (`R/coherent_cause.R`):
+  the Strategy-0 statistical cause model. The deaths are stick-broken into `C-1` conditional
+  binomial-logit APC shares (multinomial-PG); cause-specific age/cohort effects; the cause **period
+  trends share a multivariate random walk with cross-cause innovation precision `Omega` (Wishart
+  prior, `K_p ⊗ Omega`)**. Cause rates/hazards are `share × total`, so **coherent with all-cause by
+  construction** (validated machine-exact, ~1e-19; cause hazards sum to the all-cause hazard).
+  Crucially `Omega` admits **negative** cross-cause correlation — *cause replacement* — which the
+  Phase 0 `bamp_strata` fallback and independent fits cannot represent: on simulated data with a true
+  innovation correlation of −0.8, the model recovers −0.71 (90% CrI [−0.88, −0.45], excludes 0). The
+  correlation is carried into projection (shares forecast with `Omega`-correlated innovations). Same
+  dense-Gibbs reference design (no ASIS/Laplace-MH). tinytest-covered (46/46 total). **Deferred:**
+  cross-cause coupling of age/cohort (period-only now); sampling order-invariance; sparse + C port.
 - **Phase 2 (validation) — IMPLEMENTED** (branch `phase0-coherent-forecasting`). The §5 harness:
   `energy_score()` / `variogram_score()` (proper *multivariate* scoring rules, verified against
   analytic values; `R/scoring.R`); `coherence_backtest()` (hold out the last *h* periods, refit each
